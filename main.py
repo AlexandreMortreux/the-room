@@ -34,10 +34,12 @@ MODEL_DEBATE = "claude-sonnet-4-6"
 HTTP_TIMEOUT = 15
 PRICE_SOURCE = "binance_btcusdt_1d_close"
 NEWS_URL = "https://t.me/s/markettwits"
-REPO_URL = os.environ.get("REPO_URL", "https://github.com/geometrictwins/the-room")
+REPO_URL = os.environ.get("REPO_URL", "https://github.com/AlexandreMortreux/the-room")
+# прямая ссылка на файл леджера (можно переопределить через LEDGER_URL)
+LEDGER_URL = os.environ.get("LEDGER_URL", f"{REPO_URL}/blob/main/ledger.csv")
 DISCLAIMER = (
     "<i>Не является инвестиционной рекомендацией. "
-    f"Прогнозы — эксперимент, леджер: {REPO_URL}</i>"
+    f'Прогнозы — эксперимент, <a href="{LEDGER_URL}">открытый леджер</a>.</i>'
 )
 
 LEDGER_FIELDS = [
