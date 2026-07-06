@@ -191,6 +191,19 @@ def build_data_payload(klines, current_price):
     else:
         payload["fear_greed_7d"] = "unavailable"
 
+    # Производные числа считаем здесь, а не в модели: 7-дневный лой/хай,
+    # изменения в %, funding в % — готовыми, чтобы модель только цитировала.
+    payload["current_price_display"] = f"${current_price:,.0f}"
+    if isinstance(payload["daily_closes_7d"], list) and payload["daily_closes_7d"]:
+        closes = [c["close"] for c in payload["daily_closes_7d"]]
+        payload["low_7d"] = min(closes)
+        payload["high_7d"] = max(closes)
+        payload["prev_daily_close"] = closes[-1]
+        payload["weekly_change_pct"] = round((current_price / closes[0] - 1) * 100, 2)
+        payload["day_change_pct"] = round((current_price / closes[-1] - 1) * 100, 2)
+    if isinstance(payload.get("funding_rate"), float):
+        payload["funding_rate_pct"] = round(payload["funding_rate"] * 100, 4)
+
     return payload
 
 
@@ -222,8 +235,16 @@ def fetch_news(now):
             if now - posted > timedelta(hours=24):
                 continue
             text = text_el.get_text(" ", strip=True)
-            if text:
-                news.append({"datetime": iso(posted), "text": text[:600]})
+            if not text:
+                continue
+            # permalink на конкретный пост — код запомнит его и подставит сам,
+            # модели URL не отдаём (она их искажает)
+            link_el = block.select_one("a.tgme_widget_message_date[href]")
+            news.append({
+                "datetime": iso(posted),
+                "text": text[:600],
+                "url": link_el["href"] if link_el else None,
+            })
     except Exception as e:
         log(f"news parse failed, continuing with empty list: {e}")
         return []
@@ -424,22 +445,34 @@ def validate_classifier(data):
     if not isinstance(signals, list):
         raise ValueError("'signals' must be a list")
     for s in signals:
-        for key in ("headline", "event_class", "horizon_days", "priced_in_note", "why_now"):
+        for key in ("headline", "event_class", "horizon_days", "priced_in_note",
+                    "why_now", "source_id"):
             if key not in s:
                 raise ValueError(f"signal missing key '{key}'")
         if s["event_class"] not in EVENT_CLASSES:
             raise ValueError(f"bad event_class: {s['event_class']}")
+        if not isinstance(s["source_id"], int):
+            raise ValueError("'source_id' must be an integer (id входной новости)")
 
 
 def classify_news(client, news):
     if not news:
         return []
-    user = "Новости за последние 24 часа:\n" + json.dumps(news, ensure_ascii=False, indent=1)
+    # модели отдаём индексированный список без URL; ссылку возьмём из кода по source_id
+    indexed = [
+        {"id": i, "datetime": n["datetime"], "text": n["text"]}
+        for i, n in enumerate(news)
+    ]
+    user = "Новости за последние 24 часа:\n" + json.dumps(indexed, ensure_ascii=False, indent=1)
     data = call_claude_json(
         client, MODEL_CLASSIFIER, read_prompt("classifier.txt"),
         user, max_tokens=1000, validate=validate_classifier,
     )
-    return data["signals"][:2]
+    signals = data["signals"][:2]
+    for s in signals:
+        sid = s.get("source_id")
+        s["source_url"] = news[sid]["url"] if isinstance(sid, int) and 0 <= sid < len(news) else None
+    return signals
 
 
 def make_debate_validator(current_price):
@@ -630,6 +663,21 @@ def post_scorecard(client, rows, now):
 # Основной прогон
 # ---------------------------------------------------------------------------
 
+def render_source(post_html, signal):
+    """Подставляет на место {{SOURCE}} объяснение выбора (why_now, курсивом)
+    и кликабельную ссылку на первоисточник. URL берётся из кода, не из модели."""
+    post = post_html.strip()
+    parts = []
+    if signal and signal.get("why_now"):
+        parts.append(f"<i>Почему сегодня: {signal['why_now']}</i>")
+    if signal and signal.get("source_url"):
+        parts.append(f'📎 <a href="{signal["source_url"]}">Источник: MarketTwits</a>')
+    block = "\n".join(parts)
+    if "{{SOURCE}}" in post:
+        return post.replace("{{SOURCE}}", block).strip()
+    return (post + ("\n\n" + block if block else "")).strip()
+
+
 def append_predictions(rows, predictions, current_price, now):
     expires = now + timedelta(hours=24)
     for p in predictions:
@@ -684,8 +732,9 @@ def main():
     # 7. Дебат
     debate = run_debate(client, signal, data_payload, track_records, current_price)
 
-    # 8. Публикация: пост + опрос
-    tg_send_message(debate["post_html"].strip() + "\n\n" + DISCLAIMER)
+    # 8. Публикация: пост (с источником) + опрос
+    post_html = render_source(debate["post_html"], signal)
+    tg_send_message(post_html + "\n\n" + DISCLAIMER)
     tg_send_poll(debate["predictions"])
 
     # 9. Запись прогнозов в леджер
