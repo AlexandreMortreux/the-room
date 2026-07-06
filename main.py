@@ -102,22 +102,30 @@ def http_get_json(url, params=None):
 # Дата-пейлоад: Binance spot/futures + Fear & Greed, все без ключей
 # ---------------------------------------------------------------------------
 
+# data-api.binance.vision — официальное зеркало рыночных данных Binance без
+# геоблокировки: api.binance.com отдаёт 451 с IP GitHub Actions (США)
+SPOT_HOSTS = ("https://data-api.binance.vision", "https://api.binance.com")
+
+
 def fetch_klines():
     """Дневные свечи BTCUSDT: [open_time, o, h, l, close, vol, close_time, ...]."""
-    return http_get_json(
-        "https://api.binance.com/api/v3/klines",
-        params={"symbol": "BTCUSDT", "interval": "1d", "limit": 8},
-    )
+    for host in SPOT_HOSTS:
+        data = http_get_json(
+            f"{host}/api/v3/klines",
+            params={"symbol": "BTCUSDT", "interval": "1d", "limit": 8},
+        )
+        if data:
+            return data
+    return None
 
 
 def fetch_current_price(klines):
     if klines:
         return float(klines[-1][4])
-    data = http_get_json(
-        "https://api.binance.com/api/v3/ticker/price", params={"symbol": "BTCUSDT"}
-    )
-    if data:
-        return float(data["price"])
+    for host in SPOT_HOSTS:
+        data = http_get_json(f"{host}/api/v3/ticker/price", params={"symbol": "BTCUSDT"})
+        if data:
+            return float(data["price"])
     raise RuntimeError("cannot determine current BTC price: Binance spot unavailable")
 
 
@@ -136,15 +144,39 @@ def build_data_payload(klines, current_price):
     else:
         payload["daily_closes_7d"] = "unavailable"
 
+    # фьючерсные данные: Binance fapi geo-блокирует IP GitHub Actions,
+    # поэтому запасной источник — публичные эндпоинты OKX (BTC-USDT-SWAP)
     funding = http_get_json(
         "https://fapi.binance.com/fapi/v1/premiumIndex", params={"symbol": "BTCUSDT"}
     )
-    payload["funding_rate"] = float(funding["lastFundingRate"]) if funding else "unavailable"
+    if funding:
+        payload["funding_rate"] = float(funding["lastFundingRate"])
+    else:
+        okx = http_get_json(
+            "https://www.okx.com/api/v5/public/funding-rate",
+            params={"instId": "BTC-USDT-SWAP"},
+        )
+        if okx and okx.get("data"):
+            payload["funding_rate"] = float(okx["data"][0]["fundingRate"])
+            payload["funding_rate_source"] = "okx_btc_usdt_swap"
+        else:
+            payload["funding_rate"] = "unavailable"
 
     oi = http_get_json(
         "https://fapi.binance.com/fapi/v1/openInterest", params={"symbol": "BTCUSDT"}
     )
-    payload["open_interest_btc"] = float(oi["openInterest"]) if oi else "unavailable"
+    if oi:
+        payload["open_interest_btc"] = float(oi["openInterest"])
+    else:
+        okx = http_get_json(
+            "https://www.okx.com/api/v5/public/open-interest",
+            params={"instType": "SWAP", "instId": "BTC-USDT-SWAP"},
+        )
+        if okx and okx.get("data"):
+            payload["open_interest_btc"] = float(okx["data"][0]["oiCcy"])
+            payload["open_interest_source"] = "okx_btc_usdt_swap"
+        else:
+            payload["open_interest_btc"] = "unavailable"
 
     fng = http_get_json("https://api.alternative.me/fng/", params={"limit": 7})
     if fng and fng.get("data"):
