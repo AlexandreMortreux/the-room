@@ -682,7 +682,7 @@ def append_predictions(rows, predictions, current_price, now):
     expires = now + timedelta(hours=24)
     for p in predictions:
         rows.append({
-            "id": f"{now:%Y%m%d}-{p['agent']}",
+            "id": f"{now:%Y%m%d-%H%M}-{p['agent']}",
             "created_utc": iso(now),
             "agent": p["agent"],
             "asset": "BTC",
