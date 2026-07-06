@@ -1,1 +1,3 @@
 id,created_utc,agent,asset,direction,level,horizon_h,confidence,price_source,price_at_call,expires_utc,resolved_utc,price_at_expiry,result,brier
+20260706-oracle,2026-07-06T07:57:49+00:00,oracle,BTC,above,63500.00,24,0.62,binance_btcusdt_1d_close,63092.00,2026-07-07T07:57:49+00:00,,,pending,
+20260706-guardian,2026-07-06T07:57:49+00:00,guardian,BTC,below,63500.00,24,0.57,binance_btcusdt_1d_close,63092.00,2026-07-07T07:57:49+00:00,,,pending,
