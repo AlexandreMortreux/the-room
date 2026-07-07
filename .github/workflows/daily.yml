@@ -2,7 +2,7 @@ name: daily
 
 on:
   schedule:
-    - cron: "0 1 * * *" # 09:00 UTC+8
+    - cron: "20 0 * * *" # 00:20 UTC = 08:20 UTC+8 (off the top-of-hour queue)
   workflow_dispatch:
 
 permissions:
