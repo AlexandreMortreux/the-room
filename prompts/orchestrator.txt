@@ -13,13 +13,16 @@ Structure:
 1. Signal — the first sentence is the synthesis of the day wrapped in <b>…</b>,
    then 1 more sentence of intrigue. Do NOT write the title or the date — code
    adds the "📡 Signal of the Day · <date>" header above your text.
-2. Debate — 4-6 lines alternating 🔮 Oracle / 🛡 Guardian, each strictly matching
-   its agent's system prompt, positions differing on substance. 2-3 sentences per
-   line, one thought.
-3. 📊 What it means — 1-2 lines of the regime for BTC with a ▲◆▼ marker
+2. Debate — EXACTLY 4 lines, alternating 🔮 Oracle / 🛡 Guardian / 🔮 Oracle /
+   🛡 Guardian, each strictly matching its agent's system prompt, positions
+   differing on substance. HARD LIMIT: max 2 sentences and ≤280 characters per
+   line, one thought only. No line may pack two arguments.
+3. 📊 What it means — ONE line of the regime for BTC with a ▲◆▼ marker
    (regime, not action: "zone of interest in parts", not "buy").
-4. Predictions — two mutually exclusive against one level.
-Tone: alive, with jabs, no emoji spam. ≤30 seconds to read.
+4. Predictions — two mutually exclusive against one level, one short clause each.
+Tone: alive, punchy, with jabs, no emoji spam. Cut every non-essential word.
+The whole post (excluding the code-added header and footer) must be ≤900
+characters and read in ≤30 seconds. Brevity beats completeness.
 Telegram HTML (<b>, <i>), no markdown. Do not add a scores line or a sources
 line — code appends them.
 Output — strict JSON, no preamble:
