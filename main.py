@@ -744,10 +744,11 @@ def main():
         # 2. Пост развязки
         tg_send_message(build_resolution_post(resolved, rows))
 
-    # Идемпотентность: если прогноз с сегодняшней датой (UTC) уже есть —
-    # не постим и не пишем повторно (защита от двойного workflow-прогона).
+    # Идемпотентность: в боевом режиме не постим/не пишем повторно, если прогноз
+    # с сегодняшней датой (UTC) уже есть. В DRY_RUN ничего не публикуется и боевой
+    # леджер не трогается — превью можно гонять сколько угодно, дедуп не мешает.
     today = iso(now)[:10]
-    if any(r["created_utc"][:10] == today for r in rows):
+    if not DRY_RUN and any(r["created_utc"][:10] == today for r in rows):
         log("already posted today, skipping debate/publish")
         return
 
