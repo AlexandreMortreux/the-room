@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: "20 0 * * *" # 00:20 UTC = 08:20 UTC+8 (off the top-of-hour queue)
   workflow_dispatch:
+    inputs:
+      force:
+        description: "Post for real (channel + ledger). Off = dry run, nothing published."
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -27,6 +32,9 @@ jobs:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHANNEL_ID: ${{ secrets.TG_CHANNEL_ID }}
           REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+          # schedule -> real; manual -> dry unless force=true
+          DRY_RUN: ${{ github.event_name == 'schedule' && '0' || '1' }}
+          FORCE: ${{ github.event.inputs.force == 'true' && '1' || '0' }}
         run: python main.py
 
       - name: Commit ledger if changed

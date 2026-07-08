@@ -24,7 +24,10 @@ import requests
 from bs4 import BeautifulSoup
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-DRY_RUN = os.environ.get("DRY_RUN") == "1"
+# Боевой режим — только по schedule или с явным FORCE=1. Ручной workflow_dispatch
+# по умолчанию идёт как DRY_RUN и не пишет в боевой леджер/канал.
+FORCE = os.environ.get("FORCE") == "1"
+DRY_RUN = os.environ.get("DRY_RUN") == "1" and not FORCE
 LEDGER_FILE = os.path.join(ROOT, "ledger_dry.csv" if DRY_RUN else "ledger.csv")
 PROMPTS_DIR = os.path.join(ROOT, "prompts")
 
@@ -38,8 +41,8 @@ REPO_URL = os.environ.get("REPO_URL", "https://github.com/AlexandreMortreux/the-
 # прямая ссылка на файл леджера (можно переопределить через LEDGER_URL)
 LEDGER_URL = os.environ.get("LEDGER_URL", f"{REPO_URL}/blob/main/ledger.csv")
 DISCLAIMER = (
-    "<i>Не является инвестиционной рекомендацией. "
-    f'Прогнозы — эксперимент, <a href="{LEDGER_URL}">открытый леджер</a>.</i>'
+    "<i>Not financial advice. Predictions are an experiment — "
+    f'<a href="{LEDGER_URL}">open ledger</a>.</i>'
 )
 
 LEDGER_FIELDS = [
@@ -47,8 +50,6 @@ LEDGER_FIELDS = [
     "horizon_h", "confidence", "price_source", "price_at_call",
     "expires_utc", "resolved_utc", "price_at_expiry", "result", "brier",
 ]
-
-EVENT_CLASSES = {"macro", "flows", "regulation", "adoption", "incident"}
 
 
 def log(msg):
@@ -239,14 +240,7 @@ def fetch_news(now):
             text = text_el.get_text(" ", strip=True)
             if not text:
                 continue
-            # permalink на конкретный пост — код запомнит его и подставит сам,
-            # модели URL не отдаём (она их искажает)
-            link_el = block.select_one("a.tgme_widget_message_date[href]")
-            news.append({
-                "datetime": iso(posted),
-                "text": text[:600],
-                "url": link_el["href"] if link_el else None,
-            })
+            news.append({"datetime": iso(posted), "text": text[:600]})
     except Exception as e:
         log(f"news parse failed, continuing with empty list: {e}")
         return []
@@ -330,26 +324,25 @@ def build_resolution_post(resolved, rows):
     winners = [r["agent"] for r in resolved if r["result"] == "win"]
     if winners:
         names = {"oracle": "🔮 Oracle", "guardian": "🛡 Guardian"}
-        point_line = "Очко забирает " + " и ".join(names[w] for w in winners) + "."
+        point_line = "Point goes to " + " and ".join(names[w] for w in winners) + "."
     else:
-        point_line = "Очко не забрал никто — оба мимо."
+        point_line = "Nobody scores — both missed."
 
-    lines = [f"🏁 <b>Развязка</b>: дневное закрытие BTC — <b>${close:,.0f}</b>", ""]
+    lines = [f"🏁 <b>Resolution</b>: BTC daily close — <b>${close:,.0f}</b>", ""]
     for r in resolved:
         emoji = "🔮" if r["agent"] == "oracle" else "🛡"
-        arrow = "выше" if r["direction"] == "above" else "ниже"
+        arrow = "above" if r["direction"] == "above" else "below"
         mark = "✅" if r["result"] == "win" else "❌"
         lines.append(
             f"{emoji} {r['agent'].capitalize()}: {arrow} ${float(r['level']):,.0f} "
-            f"(conf {float(r['confidence']):.2f}) — {mark} {r['result']}"
+            f"({int(round(float(r['confidence']) * 100))}%) — {mark} {r['result']}"
         )
     o, g = score["oracle"], score["guardian"]
     lines += [
         "",
         point_line,
         "",
-        f"Счёт сезона: 🔮 {o['wins']}W-{o['losses']}L | 🛡 {g['wins']}W-{g['losses']}L",
-        f"Brier (накопл.): 🔮 {o['brier_sum']:.3f} | 🛡 {g['brier_sum']:.3f}",
+        f"Season: 🔮 {o['wins']}W-{o['losses']}L | 🛡 {g['wins']}W-{g['losses']}L",
     ]
     return "\n".join(lines)
 
@@ -443,38 +436,34 @@ def call_claude_json(client, model, system, user, max_tokens, validate):
 
 
 def validate_classifier(data):
-    signals = data["signals"]
-    if not isinstance(signals, list):
-        raise ValueError("'signals' must be a list")
-    for s in signals:
-        for key in ("headline", "event_class", "horizon_days", "priced_in_note",
-                    "why_now", "source_id"):
-            if key not in s:
-                raise ValueError(f"signal missing key '{key}'")
-        if s["event_class"] not in EVENT_CLASSES:
-            raise ValueError(f"bad event_class: {s['event_class']}")
-        if not isinstance(s["source_id"], int):
-            raise ValueError("'source_id' must be an integer (id входной новости)")
+    ds = data.get("day_signal")
+    if ds is None:
+        return
+    if not isinstance(ds, dict):
+        raise ValueError("'day_signal' must be an object or null")
+    headlines = ds.get("headlines")
+    if not isinstance(headlines, list) or not 2 <= len(headlines) <= 4:
+        raise ValueError("'headlines' must be a list of 2-4 items")
+    if not all(isinstance(h, str) and h.strip() for h in headlines):
+        raise ValueError("each headline must be a non-empty string")
+    if not isinstance(ds.get("synthesis"), str) or not ds["synthesis"].strip():
+        raise ValueError("'synthesis' must be a non-empty string")
 
 
 def classify_news(client, news):
+    """Возвращает синтез 2-4 связанных BTC-новостей (day_signal) либо None."""
     if not news:
-        return []
-    # модели отдаём индексированный список без URL; ссылку возьмём из кода по source_id
+        return None
     indexed = [
         {"id": i, "datetime": n["datetime"], "text": n["text"]}
         for i, n in enumerate(news)
     ]
-    user = "Новости за последние 24 часа:\n" + json.dumps(indexed, ensure_ascii=False, indent=1)
+    user = "News from the last 24 hours:\n" + json.dumps(indexed, ensure_ascii=False, indent=1)
     data = call_claude_json(
         client, MODEL_CLASSIFIER, read_prompt("classifier.txt"),
-        user, max_tokens=1000, validate=validate_classifier,
+        user, max_tokens=1200, validate=validate_classifier,
     )
-    signals = data["signals"][:2]
-    for s in signals:
-        sid = s.get("source_id")
-        s["source_url"] = news[sid]["url"] if isinstance(sid, int) and 0 <= sid < len(news) else None
-    return signals
+    return data.get("day_signal")
 
 
 def make_debate_validator(current_price):
@@ -511,7 +500,7 @@ def run_debate(client, signal, data_payload, track_records, current_price):
     template = "orchestrator.txt" if signal else "fallback.txt"
     system = read_prompt("oracle.txt") + "\n\n" + read_prompt("guardian.txt")
     inputs = {
-        "signal": signal,
+        "day_signal": signal,
         "data_payload": data_payload,
         "track_records": track_records,
     }
@@ -564,12 +553,12 @@ def tg_send_poll(predictions):
     level = float(by_agent["oracle"]["level"])
 
     def option(agent, emoji, name):
-        arrow = "выше" if by_agent[agent]["direction"] == "above" else "ниже"
+        arrow = "above" if by_agent[agent]["direction"] == "above" else "below"
         return f"{emoji} {name} — {arrow} ${level:,.0f}"
 
     tg_call("sendPoll", {
         "chat_id": os.environ.get("TG_CHANNEL_ID", ""),
-        "question": "🎯 Кто прав завтра?",
+        "question": "🎯 Who's right tomorrow?",
         "options": [option("oracle", "🔮", "Oracle"), option("guardian", "🛡", "Guardian")],
         "is_anonymous": True,
     })
@@ -644,12 +633,13 @@ def post_scorecard(client, rows, now):
         log("no resolved predictions yet, scorecard skipped")
         return
     system = (
-        "Ты — редактор ежедневного BTC-дайджеста THE ROOM. По данным ниже собери "
-        "воскресный scorecard-пост: заголовок «🏆 Итоги недели», W/L сезона обоих агентов "
-        "(🔮 Oracle и 🛡 Guardian), точность %, накопленный Brier, текущая серия, "
-        "лучший и худший колл недели с фактами. Сухо, с лёгкой иронией, ≤20 секунд чтения. "
-        "Формат Telegram HTML (<b>, <i>), без markdown. "
-        "Выход — только текст поста, без preamble."
+        "You are the editor of THE ROOM, a daily BTC digest. From the data below, "
+        "write the Sunday scorecard post in English: title '🏆 Weekly Scorecard', "
+        "season W/L for both agents (🔮 Oracle and 🛡 Guardian), accuracy %, cumulative "
+        "Brier, current streak, and the week's best and worst call with facts. Include "
+        "one short line explaining Brier: 'lower = better calibrated'. Dry, lightly ironic, "
+        "≤20 seconds to read. Telegram HTML (<b>, <i>), no markdown. English only, no "
+        "language mixing. Output the post text only, no preamble."
     )
     resp = client.messages.create(
         model=MODEL_DEBATE,
@@ -665,19 +655,55 @@ def post_scorecard(client, rows, now):
 # Основной прогон
 # ---------------------------------------------------------------------------
 
-def render_source(post_html, signal):
-    """Подставляет на место {{SOURCE}} объяснение выбора (why_now, курсивом)
-    и кликабельную ссылку на первоисточник. URL берётся из кода, не из модели."""
-    post = post_html.strip()
-    parts = []
-    if signal and signal.get("why_now"):
-        parts.append(f"<i>Почему сегодня: {signal['why_now']}</i>")
-    if signal and signal.get("source_url"):
-        parts.append(f'📎 <a href="{signal["source_url"]}">Источник: MarketTwits</a>')
-    block = "\n".join(parts)
-    if "{{SOURCE}}" in post:
-        return post.replace("{{SOURCE}}", block).strip()
-    return (post + ("\n\n" + block if block else "")).strip()
+def build_header(signal, now):
+    """Заголовок с датой — генерируется кодом, не моделью."""
+    date_str = f"{now:%B} {now.day}"
+    title = "Signal of the Day" if signal else "The Room"
+    return f"📡 <b>{title} · {date_str}</b>"
+
+
+def current_streak(rows, agent):
+    """(результат, длина) текущей серии агента по последним резолвам, либо None."""
+    history = sorted(
+        (r for r in rows if r["agent"] == agent and r["result"] in ("win", "loss")),
+        key=lambda r: r["resolved_utc"] or r["created_utc"],
+    )
+    if not history:
+        return None
+    last = history[-1]["result"]
+    n = 0
+    for r in reversed(history):
+        if r["result"] != last:
+            break
+        n += 1
+    return last, n
+
+
+def streak_leader(rows):
+    """Агент с самой длинной текущей серией побед — для строки счёта."""
+    best = None
+    for agent in ("oracle", "guardian"):
+        s = current_streak(rows, agent)
+        if s and s[0] == "win" and (best is None or s[1] > best[1]):
+            best = (agent, s[1])
+    if not best:
+        return None
+    name = "🔮 Oracle" if best[0] == "oracle" else "🛡 Guardian"
+    return f"{name} {best[1]}"
+
+
+def build_footer(rows):
+    """Подвал поста, собирается кодом: строка счёта из леджера + сноска источников."""
+    score = season_score(rows)
+    o, g = score["oracle"], score["guardian"]
+    season = (
+        f"Season: 🔮 Oracle {o['wins']}-{o['losses']} | "
+        f"🛡 Guardian {g['wins']}-{g['losses']}"
+    )
+    leader = streak_leader(rows)
+    if leader:
+        season += f" · Streak: {leader}"
+    return f"<i>{season}</i>\n<i>Sources: public news feeds</i>"
 
 
 def append_predictions(rows, predictions, current_price, now):
@@ -718,15 +744,21 @@ def main():
         # 2. Пост развязки
         tg_send_message(build_resolution_post(resolved, rows))
 
+    # Идемпотентность: если прогноз с сегодняшней датой (UTC) уже есть —
+    # не постим и не пишем повторно (защита от двойного workflow-прогона).
+    today = iso(now)[:10]
+    if any(r["created_utc"][:10] == today for r in rows):
+        log("already posted today, skipping debate/publish")
+        return
+
     # 3–4. Новости и дата-пейлоад
     news = fetch_news(now)
     log(f"news collected: {len(news)}")
     data_payload = build_data_payload(klines, current_price)
 
-    # 5. Классификатор сигналов
-    signals = classify_news(client, news)
-    signal = signals[0] if signals else None
-    log(f"signal of the day: {signal['headline'] if signal else 'none (fallback mode)'}")
+    # 5. Классификатор: синтез конфигурации дня (day_signal) или None → fallback
+    signal = classify_news(client, news)
+    log(f"day signal: {len(signal['headlines'])} headlines" if signal else "day signal: none (fallback mode)")
 
     # 6. Track records за 14 дней
     track_records = build_track_records(rows, now)
@@ -734,8 +766,12 @@ def main():
     # 7. Дебат
     debate = run_debate(client, signal, data_payload, track_records, current_price)
 
-    # 8. Публикация: пост (с источником) + опрос
-    post_html = render_source(debate["post_html"], signal)
+    # 8. Публикация: заголовок с датой + тело + подвал (счёт+источники) + опрос
+    post_html = "\n\n".join([
+        build_header(signal, now),
+        debate["post_html"].strip(),
+        build_footer(rows),
+    ])
     tg_send_message(post_html + "\n\n" + DISCLAIMER)
     tg_send_poll(debate["predictions"])
 

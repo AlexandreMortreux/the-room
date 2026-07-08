@@ -1,24 +1,28 @@
-Собери ежедневный пост THE ROOM из входных данных
+Assemble the daily THE ROOM post from the input data
 (signal, data_payload, track_records).
-ЧИСЛА: все числовые значения бери ТОЛЬКО из data_payload как есть — цену,
+NUMBERS: take every numeric value ONLY from data_payload as-is — price,
 low_7d, high_7d, weekly_change_pct, day_change_pct, funding_rate_pct,
-open_interest_btc, значения Fear & Greed. НЕ вычисляй, НЕ округляй, НЕ
-пересчитывай проценты и лои — они уже посчитаны. Цену BTC во всех упоминаниях
-пиши одной строкой current_price_display. Уровень прогноза — одно и то же число
-в тексте дебата и в блоке predictions (в опрос он попадёт из кода автоматически).
-Структура:
-1. 📡 Сигнал дня — 1–2 предложения с интригой по сути новости. Затем отдельной
-   строкой поставь токен {{SOURCE}} — на его место код сам подставит объяснение
-   выбора и ссылку на источник. Сам URL и текст why_now не пиши.
-2. Дебат — 4–6 реплик с чередованием 🔮 Oracle / 🛡 Guardian, каждая
-   строго соответствует системному промпту своего агента, позиции
-   различаются по существу.
-3. 📊 Что это значит — 1–2 строки режима для BTC с маркером ▲◆▼
-   (режим, не действие: «зона интереса частями», не «покупай»).
-4. Прогнозы — два взаимоисключающих относительно одного уровня.
-Тон: живой, с подколами, без эмодзи-спама. ≤30 секунд чтения.
-Формат Telegram HTML (<b>, <i>), без markdown.
-Выход — строго JSON без preamble:
+open_interest_btc, Fear & Greed values. Do NOT compute, round or re-derive
+percentages or lows — they are already calculated. Write the BTC price in every
+mention with the single string current_price_display. The prediction level is
+the same number in the debate text and in the predictions block (it reaches the
+poll from code automatically). Confidence in prose is written as a percent
+(65%), never a decimal.
+LANGUAGE: English only, no language mixing.
+Structure:
+1. Signal — the first sentence is the synthesis of the day wrapped in <b>…</b>,
+   then 1 more sentence of intrigue. Do NOT write the title or the date — code
+   adds the "📡 Signal of the Day · <date>" header above your text.
+2. Debate — 4-6 lines alternating 🔮 Oracle / 🛡 Guardian, each strictly matching
+   its agent's system prompt, positions differing on substance. 2-3 sentences per
+   line, one thought.
+3. 📊 What it means — 1-2 lines of the regime for BTC with a ▲◆▼ marker
+   (regime, not action: "zone of interest in parts", not "buy").
+4. Predictions — two mutually exclusive against one level.
+Tone: alive, with jabs, no emoji spam. ≤30 seconds to read.
+Telegram HTML (<b>, <i>), no markdown. Do not add a scores line or a sources
+line — code appends them.
+Output — strict JSON, no preamble:
 {"post_html":"...","predictions":[
 {"agent":"oracle","asset":"BTC","direction":"above","level":N,
 "horizon_h":24,"confidence":0.NN},

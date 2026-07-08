@@ -1,8 +1,9 @@
-Сигнала дня нет (тихий рынок). Собери пост THE ROOM в одном из форматов
-на выбор (чередуй): разбор популярного рыночного мифа про BTC;
-пересуд старого спора агентов из track_records; разбор текущего
-позиционирования (funding, OI, F&G) как самостоятельный сюжет.
-Структура и правила те же, что в основном оркестраторе, включая правило
-ЧИСЕЛ (все значения — только из data_payload, ничего не вычислять),
-два взаимоисключающих прогноза и JSON-формат ответа. Сигнала и источника
-нет — токен {{SOURCE}} НЕ ставь.
+No signal of the day (quiet market). Assemble the THE ROOM post in one of these
+formats (rotate): a breakdown of a popular BTC market myth; a rematch of an old
+argument between the agents from track_records; a breakdown of current
+positioning (funding, OI, F&G) as a standalone story.
+Same structure and rules as the main orchestrator, including the NUMBERS rule
+(every value only from data_payload, compute nothing), English only, confidence
+as a percent in prose, the first sentence wrapped in <b>…</b>, two mutually
+exclusive predictions, and the JSON response format. There is no signal or
+source. Do not add a scores line or a sources line — code appends them.
