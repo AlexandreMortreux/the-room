@@ -1,7 +1,9 @@
 id,created_utc,agent,asset,direction,level,horizon_h,confidence,price_source,price_at_call,expires_utc,resolved_utc,price_at_expiry,result,brier
-20260706-0757-oracle,2026-07-06T07:57:49+00:00,oracle,BTC,above,63500.00,24,0.62,binance_btcusdt_1d_close,63092.00,2026-07-07T07:57:49+00:00,,,pending,
-20260706-0757-guardian,2026-07-06T07:57:49+00:00,guardian,BTC,below,63500.00,24,0.57,binance_btcusdt_1d_close,63092.00,2026-07-07T07:57:49+00:00,,,pending,
-20260706-1423-oracle,2026-07-06T14:23:16+00:00,oracle,BTC,above,62500.00,24,0.62,binance_btcusdt_1d_close,61917.61,2026-07-07T14:23:16+00:00,,,pending,
-20260706-1423-guardian,2026-07-06T14:23:16+00:00,guardian,BTC,below,62500.00,24,0.61,binance_btcusdt_1d_close,61917.61,2026-07-07T14:23:16+00:00,,,pending,
+20260706-0757-oracle,2026-07-06T07:57:49+00:00,oracle,BTC,above,63500.00,24,0.62,binance_btcusdt_1d_close,63092.00,2026-07-07T07:57:49+00:00,2026-07-08T03:49:00+00:00,63363.99,loss,0.3844
+20260706-0757-guardian,2026-07-06T07:57:49+00:00,guardian,BTC,below,63500.00,24,0.57,binance_btcusdt_1d_close,63092.00,2026-07-07T07:57:49+00:00,2026-07-08T03:49:00+00:00,63363.99,win,0.1849
+20260706-1423-oracle,2026-07-06T14:23:16+00:00,oracle,BTC,above,62500.00,24,0.62,binance_btcusdt_1d_close,61917.61,2026-07-07T14:23:16+00:00,2026-07-08T03:49:00+00:00,63363.99,win,0.1444
+20260706-1423-guardian,2026-07-06T14:23:16+00:00,guardian,BTC,below,62500.00,24,0.61,binance_btcusdt_1d_close,61917.61,2026-07-07T14:23:16+00:00,2026-07-08T03:49:00+00:00,63363.99,loss,0.3721
 20260707-0452-oracle,2026-07-07T04:52:00+00:00,oracle,BTC,above,63500.00,24,0.62,binance_btcusdt_1d_close,63095.99,2026-07-08T04:52:00+00:00,,,pending,
 20260707-0452-guardian,2026-07-07T04:52:00+00:00,guardian,BTC,below,63500.00,24,0.58,binance_btcusdt_1d_close,63095.99,2026-07-08T04:52:00+00:00,,,pending,
+20260708-0349-oracle,2026-07-08T03:49:00+00:00,oracle,BTC,above,63000.00,24,0.62,binance_btcusdt_1d_close,62908.01,2026-07-09T03:49:00+00:00,,,pending,
+20260708-0349-guardian,2026-07-08T03:49:00+00:00,guardian,BTC,below,63000.00,24,0.60,binance_btcusdt_1d_close,62908.01,2026-07-09T03:49:00+00:00,,,pending,
