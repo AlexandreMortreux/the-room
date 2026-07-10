@@ -1,30 +1,38 @@
 Assemble the daily THE ROOM post from the input data
-(signal, data_payload, track_records).
-NUMBERS: take every numeric value ONLY from data_payload as-is — price,
-low_7d, high_7d, weekly_change_pct, day_change_pct, funding_rate_pct,
-open_interest_btc, Fear & Greed values. Do NOT compute, round or re-derive
-percentages or lows — they are already calculated. Write the BTC price in every
-mention with the single string current_price_display. The prediction level is
-the same number in the debate text and in the predictions block (it reaches the
-poll from code automatically). Confidence in prose is written as a percent
-(65%), never a decimal.
-LANGUAGE: English only, no language mixing.
+(day_signal, data_payload, track_records).
+NUMBERS: every numeric value ONLY from data_payload as-is — price, low_7d,
+high_7d, weekly_change_pct, day_change_pct, funding_rate_pct, open_interest_btc,
+Fear & Greed. Do NOT compute, round or re-derive. Confidence is a single number
+per agent, shown as a percent (65%) — never split into components.
+LANGUAGE: English only, no mixing. Forbidden deal words anywhere: long, short,
+buy, sell, position, size. Only forecast language: above/below, closes, holds, level.
 Structure:
-1. Signal — the first sentence is the synthesis of the day wrapped in <b>…</b>,
-   then 1 more sentence of intrigue. Do NOT write the title or the date — code
-   adds the "📡 Signal of the Day · <date>" header above your text.
+1. Signal — the first sentence (bold) is LAYERED: stack the day_signal entities,
+   each with a 2-4 word FACTUAL gloss, then close with a $PRICE tension phrase.
+   Glosses are facts ("strikes confirmed", "inflows record"), never
+   interpretations ("panic", "fear"). Form:
+   "<Entity> (<factual gloss>) + <Entity> (<gloss>) [+ ...] — $<price> <tension>".
+   Then one sentence of intrigue. Do NOT write the title/date — code adds the
+   "📡 Signal of the Day · <date>" header.
 2. Debate — EXACTLY 4 lines, alternating 🔮 Oracle / 🛡 Guardian / 🔮 Oracle /
-   🛡 Guardian, each strictly matching its agent's system prompt, positions
-   differing on substance. HARD LIMIT: max 2 sentences and ≤280 characters per
-   line, one thought only. No line may pack two arguments.
-3. 📊 What it means — ONE line of the regime for BTC with a ▲◆▼ marker
-   (regime, not action: "zone of interest in parts", not "buy").
-4. Predictions — two mutually exclusive against one level, one short clause each.
-Tone: alive, punchy, with jabs, no emoji spam. Cut every non-essential word.
-The whole post (excluding the code-added header and footer) must be ≤900
-characters and read in ≤30 seconds. Brevity beats completeness.
-Telegram HTML (<b>, <i>), no markdown. Do not add a scores line or a sources
-line — code appends them.
+   🛡 Guardian. Each agent's FIRST line OPENS with its stance as one clause:
+   "Above $<level> — 65%." / "Below $<level> — 62%." — then the argument. HARD
+   LIMIT: max 2 sentences and ≤280 characters per line, one thought.
+3. 📊 What it means — ONE line of the regime with a ▲◆▼ marker (regime, not
+   action: "zone of interest in parts", not "buy").
+4. Predictions — two mutually exclusive calls against ONE level. Choose the level
+   as the WATERSHED: the price above which Oracle is right and below which
+   Guardian is right, at the nearest structural level (yesterday's high/low from
+   data_payload, a range boundary, or a round number). The level MUST NOT equal
+   the current price. If both lean the same way, place the level where they
+   diverge in magnitude (one expects the break, the other the fade). Under each
+   agent's call, one line:
+   "Driver: <main factor from data_payload> · Invalidation: <specific level or
+   condition from the data at which this agent concedes>" — both from the payload,
+   not invented.
+Tone: alive, punchy, with jabs. Whole post (excluding code header/footer) ≤900
+characters, ≤30 seconds. Telegram HTML (<b>, <i>), no markdown. Do not add a
+scores line or a sources line — code appends them.
 Output — strict JSON, no preamble:
 {"post_html":"...","predictions":[
 {"agent":"oracle","asset":"BTC","direction":"above","level":N,

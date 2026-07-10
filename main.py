@@ -16,6 +16,7 @@ import os
 import re
 import shutil
 import sys
+import tempfile
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -493,6 +494,12 @@ def make_debate_validator(current_price):
                 raise ValueError(
                     f"level {level} outside ±15% of current price {current_price}"
                 )
+            if abs(level - current_price) < 0.001 * current_price:
+                raise ValueError(
+                    f"level {level} must be a structural watershed distinct from the "
+                    f"current price {current_price:.0f} (use yesterday's high/low, a "
+                    f"range boundary or a round number), not the current price"
+                )
     return validate
 
 
@@ -537,6 +544,29 @@ def tg_call(method, payload):
         if attempt == 0:
             time.sleep(3)
     raise RuntimeError(f"Telegram {method} failed: {last_err}")
+
+
+def tg_send_photo(path):
+    if DRY_RUN:
+        print(f"\n[DRY_RUN] Telegram sendPhoto: {path}")
+        return
+    token = os.environ["TG_BOT_TOKEN"]
+    url = f"https://api.telegram.org/bot{token}/sendPhoto"
+    last_err = None
+    for attempt in range(2):
+        try:
+            with open(path, "rb") as f:
+                resp = requests.post(url, data={"chat_id": os.environ.get("TG_CHANNEL_ID", "")},
+                                     files={"photo": f}, timeout=30)
+            body = resp.json()
+            if body.get("ok"):
+                return
+            last_err = body.get("description", resp.text)
+        except (requests.RequestException, ValueError, OSError) as e:
+            last_err = e
+        if attempt == 0:
+            time.sleep(3)
+    raise RuntimeError(f"Telegram sendPhoto failed: {last_err}")
 
 
 def tg_send_message(html):
@@ -744,11 +774,11 @@ def main():
         # 2. Пост развязки
         tg_send_message(build_resolution_post(resolved, rows))
 
-    # Идемпотентность: в боевом режиме не постим/не пишем повторно, если прогноз
-    # с сегодняшней датой (UTC) уже есть. В DRY_RUN ничего не публикуется и боевой
-    # леджер не трогается — превью можно гонять сколько угодно, дедуп не мешает.
+    # Идемпотентность: в боевом режиме (schedule) не постим/не пишем повторно,
+    # если прогноз с сегодняшней датой (UTC) уже есть. DRY_RUN и явный FORCE=1
+    # обходят дедуп — превью и намеренный ручной прогон можно гонять всегда.
     today = iso(now)[:10]
-    if not DRY_RUN and any(r["created_utc"][:10] == today for r in rows):
+    if not DRY_RUN and not FORCE and any(r["created_utc"][:10] == today for r in rows):
         log("already posted today, skipping debate/publish")
         return
 
@@ -767,7 +797,29 @@ def main():
     # 7. Дебат
     debate = run_debate(client, signal, data_payload, track_records, current_price)
 
-    # 8. Публикация: заголовок с датой + тело + подвал (счёт+источники) + опрос
+    # 8. Публикация: карточка (best-effort) → текст → опрос
+    #    Порядок: sendPhoto, затем текст, затем sendPoll. Падение генерации/отправки
+    #    карточки не роняет прогон — постим текст без фото и пишем warning.
+    try:
+        import card as card_mod
+        card_resolved = None
+        if resolved:
+            wrow = next((r for r in resolved if r["result"] == "win"), None)
+            card_resolved = {
+                "winner": wrow["agent"] if wrow else None,
+                "close_px": float(resolved[0]["price_at_expiry"]),
+            }
+        sc = season_score(rows)
+        season_pair = (f"{sc['oracle']['wins']}-{sc['oracle']['losses']}",
+                       f"{sc['guardian']['wins']}-{sc['guardian']['losses']}")
+        confs = {p["agent"]: float(p["confidence"]) for p in debate["predictions"]}
+        level = float(debate["predictions"][0]["level"])
+        card_path = os.path.join(tempfile.gettempdir(), "the_room_card.png")
+        card_mod.build_card(card_path, current_price, confs, level, season_pair, card_resolved)
+        tg_send_photo(card_path)
+    except Exception as e:
+        log(f"WARNING: card generation/post failed, posting text only: {e}")
+
     post_html = "\n\n".join([
         build_header(signal, now),
         debate["post_html"].strip(),
