@@ -9,3 +9,5 @@ id,created_utc,agent,asset,direction,level,horizon_h,confidence,price_source,pri
 20260709-0416-guardian,2026-07-09T04:16:34+00:00,guardian,BTC,below,62068.00,24,0.62,binance_btcusdt_1d_close,62068.47,2026-07-10T04:16:34+00:00,,,pending,
 20260710-0419-oracle,2026-07-10T04:19:01+00:00,oracle,BTC,above,64000.00,24,0.65,binance_btcusdt_1d_close,64000.00,2026-07-11T04:19:01+00:00,,,pending,
 20260710-0419-guardian,2026-07-10T04:19:01+00:00,guardian,BTC,below,64000.00,24,0.62,binance_btcusdt_1d_close,64000.00,2026-07-11T04:19:01+00:00,,,pending,
+20260710-1225-oracle,2026-07-10T12:25:56+00:00,oracle,BTC,above,64042.00,24,0.67,binance_btcusdt_1d_close,64456.00,2026-07-11T12:25:56+00:00,,,pending,
+20260710-1225-guardian,2026-07-10T12:25:56+00:00,guardian,BTC,below,64042.00,24,0.62,binance_btcusdt_1d_close,64456.00,2026-07-11T12:25:56+00:00,,,pending,
