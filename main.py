@@ -839,6 +839,16 @@ def main():
 
     # 1. Resolve expired predictions
     rows = load_ledger()
+    # STAGE-only test switch: back-date the oldest pending pair so the morning
+    # resolution path (Template A card + caption) fires on demand in staging.
+    if STAGE and os.environ.get("STAGE_RESOLVE_TEST") == "1":
+        days = sorted({r["created_utc"][:10] for r in rows if r["result"] == "pending"})
+        if days:
+            backdated = iso(now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(hours=12))
+            for r in rows:
+                if r["result"] == "pending" and r["created_utc"][:10] == days[0]:
+                    r["expires_utc"] = backdated
+            log(f"STAGE_RESOLVE_TEST: back-dated {days[0]} pending pair to force a resolution")
     klines = fetch_klines()
     current_price = fetch_current_price(klines)
     resolved = resolve_pending(rows, klines, now)

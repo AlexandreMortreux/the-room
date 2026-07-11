@@ -9,6 +9,10 @@ on:
         description: "On = PRODUCTION (real channel + ledger). Off = STAGING channel, ledger_staging.csv."
         type: boolean
         default: false
+      resolve_test:
+        description: "STAGING only: force a resolution (Template A card) by back-dating the oldest pending pair."
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -37,6 +41,7 @@ jobs:
           # schedule -> production; manual -> staging unless force=true -> production
           STAGE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.force != 'true' && '1' || '0' }}
           FORCE: ${{ github.event.inputs.force == 'true' && '1' || '0' }}
+          STAGE_RESOLVE_TEST: ${{ github.event.inputs.resolve_test == 'true' && '1' || '0' }}
         run: python main.py
 
       - name: Commit ledger if changed
