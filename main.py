@@ -302,6 +302,13 @@ def season_score(rows):
     return score
 
 
+def season_pair(rows):
+    """('W-L', 'W-L') for Oracle and Guardian — the cards' footer format."""
+    sc = season_score(rows)
+    return (f"{sc['oracle']['wins']}-{sc['oracle']['losses']}",
+            f"{sc['guardian']['wins']}-{sc['guardian']['losses']}")
+
+
 # ---------------------------------------------------------------------------
 # Step 1: resolve expired predictions against the Binance daily close
 # ---------------------------------------------------------------------------
@@ -562,18 +569,26 @@ def tg_call(method, payload):
     raise RuntimeError(f"Telegram {method} failed: {last_err}")
 
 
-def tg_send_photo(path):
+def tg_send_photo(path, caption=None):
+    """Sends the PNG under its meaningful basename; optional HTML caption."""
+    filename = os.path.basename(path)
     if DRY_RUN:
-        print(f"\n[DRY_RUN] Telegram sendPhoto: {path}")
+        print(f"\n[DRY_RUN] Telegram sendPhoto: {filename}")
+        if caption:
+            print(f"[DRY_RUN] caption:\n{caption}")
         return
     token = os.environ["TG_BOT_TOKEN"]
     url = f"https://api.telegram.org/bot{token}/sendPhoto"
+    data = {"chat_id": tg_channel()}
+    if caption:
+        data["caption"] = caption
+        data["parse_mode"] = "HTML"
     last_err = None
     for attempt in range(2):
         try:
             with open(path, "rb") as f:
-                resp = requests.post(url, data={"chat_id": tg_channel()},
-                                     files={"photo": f}, timeout=30)
+                resp = requests.post(url, data=data,
+                                     files={"photo": (filename, f)}, timeout=30)
             body = resp.json()
             if body.get("ok"):
                 return
@@ -788,8 +803,35 @@ def main():
     if resolved:
         save_ledger(rows)
         log(f"resolved {len(resolved)} prediction(s)")
-        # 2. Resolution post
-        tg_send_message(build_resolution_post(resolved, rows))
+        # 2. Resolution — Template A card with the full text as its caption:
+        #    one message instead of two. Card failure falls back to text only.
+        resolution_text = build_resolution_post(resolved, rows)
+        try:
+            import card as card_mod
+            wrow = next((r for r in resolved if r["result"] == "win"), None)
+            winner = wrow["agent"] if wrow else None
+            close_px = float(resolved[0]["price_at_expiry"])
+            fname = (f"theroom_{now:%Y-%m-%d}_"
+                     f"{winner.upper() + '-W' if winner else 'NO-W'}_{close_px:.0f}.png")
+            period = f"Resolution · {now - timedelta(hours=24):%b %d} daily close"
+            leader = streak_leader(rows)
+            card_mod.build_resolution_card(
+                os.path.join(tempfile.gettempdir(), fname),
+                close_px=close_px,
+                level=float(resolved[0]["level"]),
+                preds={r["agent"]: float(r["confidence"]) for r in resolved},
+                winner=winner,
+                season=season_pair(rows),
+                streak=leader.replace("🔮 ", "").replace("🛡 ", "") if leader else None,
+                period_label=period,
+            )
+            caption = resolution_text if len(resolution_text) <= 1024 else None
+            tg_send_photo(os.path.join(tempfile.gettempdir(), fname), caption=caption)
+            if caption is None:
+                tg_send_message(resolution_text)
+        except Exception as e:
+            log(f"WARNING: resolution card failed, posting text only: {e}")
+            tg_send_message(resolution_text)
 
     # Idempotency: a scheduled production run does not post/write twice if a
     # prediction with today's UTC date already exists. DRY_RUN, STAGE and an
@@ -814,25 +856,18 @@ def main():
     # 7. Debate
     debate = run_debate(client, signal, data_payload, track_records, current_price)
 
-    # 8. Publish: card (best-effort) -> text -> poll
-    #    Order: sendPhoto, then text, then sendPoll. A card build/send failure
-    #    does not fail the run — post text without the photo and log a warning.
+    # 8. Publish: Today card (Template B, best-effort) -> text -> poll.
+    #    Morning order overall: Resolution card+caption -> Today card ->
+    #    Signal of the Day (text) -> Poll. Yesterday lives entirely in
+    #    Template A, so the Today card carries no resolution info. A card
+    #    build/send failure does not fail the run — text posts without it.
     try:
         import card as card_mod
-        card_resolved = None
-        if resolved:
-            wrow = next((r for r in resolved if r["result"] == "win"), None)
-            card_resolved = {
-                "winner": wrow["agent"] if wrow else None,
-                "close_px": float(resolved[0]["price_at_expiry"]),
-            }
-        sc = season_score(rows)
-        season_pair = (f"{sc['oracle']['wins']}-{sc['oracle']['losses']}",
-                       f"{sc['guardian']['wins']}-{sc['guardian']['losses']}")
         confs = {p["agent"]: float(p["confidence"]) for p in debate["predictions"]}
         level = float(debate["predictions"][0]["level"])
-        card_path = os.path.join(tempfile.gettempdir(), "the_room_card.png")
-        card_mod.build_card(card_path, current_price, confs, level, season_pair, card_resolved)
+        card_path = os.path.join(
+            tempfile.gettempdir(), f"theroom_{now:%Y-%m-%d}_bet_{level:.0f}.png")
+        card_mod.build_today_card(card_path, current_price, confs, level, season_pair(rows))
         tg_send_photo(card_path)
     except Exception as e:
         log(f"WARNING: card generation/post failed, posting text only: {e}")

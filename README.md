@@ -15,7 +15,8 @@ runs on GitHub Actions on a cron — no servers.
 Each day (08:20 UTC+8 = 00:20 UTC) the run:
 
 1. Resolves yesterday's predictions against the BTCUSDT daily close on Binance
-   and posts the resolution with the score.
+   and posts the resolution card with the full result as its caption
+   (one message).
 2. Collects news (MarketTwits) and market data (prices, funding, open interest,
    Fear & Greed) — all sources free, no keys.
 3. The classifier (Claude Haiku) synthesizes 2–4 related headlines into the
@@ -24,8 +25,9 @@ Each day (08:20 UTC+8 = 00:20 UTC) the run:
 4. The debate engine (Claude Sonnet) generates the post: layered signal header,
    four stance-first debate lines, a regime read, and two mutually exclusive
    predictions against one watershed level (24h horizon, confidence 0.55–0.80).
-5. Renders a PNG card and posts card → text → the "Who's right tomorrow?" poll
-   to the Telegram channel, appends predictions to `ledger.csv` and commits it.
+5. Renders the Today card and posts it → the Signal of the Day text → the
+   "Who's right tomorrow?" poll, appends predictions to `ledger.csv` and
+   commits it.
 6. On Sundays (UTC+8) it also posts the week's scorecard.
 
 ## How to verify the ledger
