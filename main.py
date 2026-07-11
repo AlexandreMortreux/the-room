@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
-"""THE ROOM — автономный ежедневный BTC-дайджест.
+"""THE ROOM — an autonomous daily BTC digest.
 
-Два AI-аналитика с противоположными методологиями (Oracle и Guardian)
-разбирают один рыночный сигнал дня, фиксируют взаимоисключающие
-проверяемые прогнозы и ведут публичный счёт точности в ledger.csv.
+Two AI analysts with opposing methodologies (Oracle and Guardian) break down
+one market signal of the day, lock in mutually exclusive, verifiable predictions
+and keep a public accuracy score in ledger.csv.
 
-Запускается ежедневно из GitHub Actions, без серверов.
-Режим DRY_RUN=1 — полный прогон без отправки в Telegram,
-леджер пишется в ledger_dry.csv.
+Runs daily from GitHub Actions, no servers. Run modes are selected by env vars
+(see the constants below): DRY_RUN, STAGE, FORCE, or production.
 """
 
 import csv
@@ -25,11 +24,20 @@ import requests
 from bs4 import BeautifulSoup
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-# Боевой режим — только по schedule или с явным FORCE=1. Ручной workflow_dispatch
-# по умолчанию идёт как DRY_RUN и не пишет в боевой леджер/канал.
+# Run modes (precedence: DRY_RUN > FORCE > STAGE > production):
+#   DRY_RUN=1  local debug — print instead of sending, ledger_dry.csv
+#   STAGE=1    full run to the STAGING channel, ledger_staging.csv, [STAGE] logs
+#   FORCE=1    production run that bypasses the daily dedup (manual go)
+#   (none)     production (scheduled cron)
+DRY_RUN = os.environ.get("DRY_RUN") == "1"
 FORCE = os.environ.get("FORCE") == "1"
-DRY_RUN = os.environ.get("DRY_RUN") == "1" and not FORCE
-LEDGER_FILE = os.path.join(ROOT, "ledger_dry.csv" if DRY_RUN else "ledger.csv")
+STAGE = os.environ.get("STAGE") == "1" and not FORCE and not DRY_RUN
+if DRY_RUN:
+    LEDGER_FILE = os.path.join(ROOT, "ledger_dry.csv")
+elif STAGE:
+    LEDGER_FILE = os.path.join(ROOT, "ledger_staging.csv")
+else:
+    LEDGER_FILE = os.path.join(ROOT, "ledger.csv")
 PROMPTS_DIR = os.path.join(ROOT, "prompts")
 
 MODEL_CLASSIFIER = "claude-haiku-4-5-20251001"
@@ -39,7 +47,7 @@ HTTP_TIMEOUT = 15
 PRICE_SOURCE = "binance_btcusdt_1d_close"
 NEWS_URL = "https://t.me/s/markettwits"
 REPO_URL = os.environ.get("REPO_URL", "https://github.com/AlexandreMortreux/the-room")
-# прямая ссылка на файл леджера (можно переопределить через LEDGER_URL)
+# direct link to the ledger file (overridable via LEDGER_URL)
 LEDGER_URL = os.environ.get("LEDGER_URL", f"{REPO_URL}/blob/main/ledger.csv")
 DISCLAIMER = (
     "<i>Not financial advice. Predictions are an experiment — "
@@ -54,7 +62,14 @@ LEDGER_FIELDS = [
 
 
 def log(msg):
-    print(f"[the-room] {msg}", flush=True)
+    print(f"[the-room]{' [STAGE]' if STAGE else ''} {msg}", flush=True)
+
+
+def tg_channel():
+    """Target chat id: the staging channel in STAGE mode, else production."""
+    if STAGE:
+        return os.environ.get("TG_CHANNEL_ID_STAGING", "")
+    return os.environ.get("TG_CHANNEL_ID", "")
 
 
 def utcnow():
@@ -73,7 +88,7 @@ def parse_iso(s):
 
 
 # ---------------------------------------------------------------------------
-# HTTP: таймаут 15с, один ретрай; None при недоступности источника
+# HTTP: 15s timeout, one retry; None when a source is unavailable
 # ---------------------------------------------------------------------------
 
 def http_get(url, params=None, headers=None):
@@ -103,16 +118,16 @@ def http_get_json(url, params=None):
 
 
 # ---------------------------------------------------------------------------
-# Дата-пейлоад: Binance spot/futures + Fear & Greed, все без ключей
+# Data payload: Binance spot/futures + Fear & Greed, all keyless
 # ---------------------------------------------------------------------------
 
-# data-api.binance.vision — официальное зеркало рыночных данных Binance без
-# геоблокировки: api.binance.com отдаёт 451 с IP GitHub Actions (США)
+# data-api.binance.vision is Binance's official market-data mirror without
+# geoblocking: api.binance.com returns 451 from GitHub Actions IPs (US)
 SPOT_HOSTS = ("https://data-api.binance.vision", "https://api.binance.com")
 
 
 def fetch_klines():
-    """Дневные свечи BTCUSDT: [open_time, o, h, l, close, vol, close_time, ...]."""
+    """Daily BTCUSDT candles: [open_time, o, h, l, close, vol, close_time, ...]."""
     for host in SPOT_HOSTS:
         data = http_get_json(
             f"{host}/api/v3/klines",
@@ -148,8 +163,8 @@ def build_data_payload(klines, current_price):
     else:
         payload["daily_closes_7d"] = "unavailable"
 
-    # фьючерсные данные: Binance fapi geo-блокирует IP GitHub Actions,
-    # поэтому запасной источник — публичные эндпоинты OKX (BTC-USDT-SWAP)
+    # futures data: Binance fapi geo-blocks GitHub Actions IPs, so the
+    # fallback is OKX public endpoints (BTC-USDT-SWAP)
     funding = http_get_json(
         "https://fapi.binance.com/fapi/v1/premiumIndex", params={"symbol": "BTCUSDT"}
     )
@@ -195,8 +210,8 @@ def build_data_payload(klines, current_price):
     else:
         payload["fear_greed_7d"] = "unavailable"
 
-    # Производные числа считаем здесь, а не в модели: 7-дневный лой/хай,
-    # изменения в %, funding в % — готовыми, чтобы модель только цитировала.
+    # Derived numbers are computed here, not by the model: 7-day low/high,
+    # % changes, funding % — ready-made, so the model only cites them.
     payload["current_price_display"] = f"${current_price:,.0f}"
     if isinstance(payload["daily_closes_7d"], list) and payload["daily_closes_7d"]:
         closes = [c["close"] for c in payload["daily_closes_7d"]]
@@ -212,7 +227,7 @@ def build_data_payload(klines, current_price):
 
 
 # ---------------------------------------------------------------------------
-# Новости: t.me/s/markettwits за последние 24 часа
+# News: t.me/s/markettwits over the last 24 hours
 # ---------------------------------------------------------------------------
 
 def fetch_news(now):
@@ -249,14 +264,15 @@ def fetch_news(now):
 
 
 # ---------------------------------------------------------------------------
-# Леджер
+# Ledger
 # ---------------------------------------------------------------------------
 
 def load_ledger():
-    if DRY_RUN and not os.path.exists(LEDGER_FILE):
-        real = os.path.join(ROOT, "ledger.csv")
-        if os.path.exists(real):
-            shutil.copyfile(real, LEDGER_FILE)
+    # In non-production modes, seed the throwaway ledger from the real one so
+    # resolution and track records are realistic; production edits ledger.csv.
+    prod = os.path.join(ROOT, "ledger.csv")
+    if LEDGER_FILE != prod and not os.path.exists(LEDGER_FILE) and os.path.exists(prod):
+        shutil.copyfile(prod, LEDGER_FILE)
     if not os.path.exists(LEDGER_FILE):
         return []
     with open(LEDGER_FILE, newline="", encoding="utf-8") as f:
@@ -287,11 +303,11 @@ def season_score(rows):
 
 
 # ---------------------------------------------------------------------------
-# Шаг 1: резолв истёкших прогнозов по дневному закрытию Binance
+# Step 1: resolve expired predictions against the Binance daily close
 # ---------------------------------------------------------------------------
 
 def resolve_pending(rows, klines, now):
-    """Проставляет win/loss и Brier по ближайшему дневному закрытию после expires_utc."""
+    """Sets win/loss and Brier from the first daily close after expires_utc."""
     if not klines:
         log("klines unavailable, resolution skipped")
         return []
@@ -305,7 +321,7 @@ def resolve_pending(rows, klines, now):
             continue
         candle = next((k for k in finished if k[6] / 1000 >= expires.timestamp()), None)
         if candle is None:
-            continue  # дневная свеча ещё не закрылась — остаётся pending
+            continue  # the daily candle hasn't closed yet — stays pending
         close = float(candle[4])
         level = float(row["level"])
         win = close > level if row["direction"] == "above" else close < level
@@ -349,7 +365,7 @@ def build_resolution_post(resolved, rows):
 
 
 # ---------------------------------------------------------------------------
-# Track records за последние 14 дней
+# Track records over the last 14 days
 # ---------------------------------------------------------------------------
 
 def build_track_records(rows, now):
@@ -391,7 +407,7 @@ def build_track_records(rows, now):
 
 
 # ---------------------------------------------------------------------------
-# Claude: вызовы со строгим JSON, один ретрай с текстом ошибки
+# Claude: strict-JSON calls, one retry with the error text
 # ---------------------------------------------------------------------------
 
 def read_prompt(name):
@@ -428,8 +444,8 @@ def call_claude_json(client, model, system, user, max_tokens, validate):
                 {
                     "role": "user",
                     "content": (
-                        f"Твой ответ невалиден: {e}. "
-                        "Верни исправленный строгий JSON без preamble и markdown."
+                        f"Your response is invalid: {e}. "
+                        "Return corrected strict JSON, no preamble or markdown."
                     ),
                 },
             ]
@@ -452,7 +468,7 @@ def validate_classifier(data):
 
 
 def classify_news(client, news):
-    """Возвращает синтез 2-4 связанных BTC-новостей (day_signal) либо None."""
+    """Returns a synthesis of 2-4 related BTC news items (day_signal) or None."""
     if not news:
         return None
     indexed = [
@@ -511,7 +527,7 @@ def run_debate(client, signal, data_payload, track_records, current_price):
         "data_payload": data_payload,
         "track_records": track_records,
     }
-    user = read_prompt(template) + "\n\nВходные данные:\n" + json.dumps(
+    user = read_prompt(template) + "\n\nInput data:\n" + json.dumps(
         inputs, ensure_ascii=False, indent=1
     )
     return call_claude_json(
@@ -556,7 +572,7 @@ def tg_send_photo(path):
     for attempt in range(2):
         try:
             with open(path, "rb") as f:
-                resp = requests.post(url, data={"chat_id": os.environ.get("TG_CHANNEL_ID", "")},
+                resp = requests.post(url, data={"chat_id": tg_channel()},
                                      files={"photo": f}, timeout=30)
             body = resp.json()
             if body.get("ok"):
@@ -571,7 +587,7 @@ def tg_send_photo(path):
 
 def tg_send_message(html):
     tg_call("sendMessage", {
-        "chat_id": os.environ.get("TG_CHANNEL_ID", ""),
+        "chat_id": tg_channel(),
         "text": html,
         "parse_mode": "HTML",
         "disable_web_page_preview": True,
@@ -587,7 +603,7 @@ def tg_send_poll(predictions):
         return f"{emoji} {name} — {arrow} ${level:,.0f}"
 
     tg_call("sendPoll", {
-        "chat_id": os.environ.get("TG_CHANNEL_ID", ""),
+        "chat_id": tg_channel(),
         "question": "🎯 Who's right tomorrow?",
         "options": [option("oracle", "🔮", "Oracle"), option("guardian", "🛡", "Guardian")],
         "is_anonymous": True,
@@ -595,7 +611,7 @@ def tg_send_poll(predictions):
 
 
 # ---------------------------------------------------------------------------
-# Воскресный scorecard (по UTC+8)
+# Sunday scorecard (by UTC+8)
 # ---------------------------------------------------------------------------
 
 def is_sunday_utc8(now):
@@ -682,18 +698,18 @@ def post_scorecard(client, rows, now):
 
 
 # ---------------------------------------------------------------------------
-# Основной прогон
+# Main run
 # ---------------------------------------------------------------------------
 
 def build_header(signal, now):
-    """Заголовок с датой — генерируется кодом, не моделью."""
+    """Dated header — generated by code, not the model."""
     date_str = f"{now:%B} {now.day}"
     title = "Signal of the Day" if signal else "The Room"
     return f"📡 <b>{title} · {date_str}</b>"
 
 
 def current_streak(rows, agent):
-    """(результат, длина) текущей серии агента по последним резолвам, либо None."""
+    """(result, length) of the agent's current streak by latest resolutions, or None."""
     history = sorted(
         (r for r in rows if r["agent"] == agent and r["result"] in ("win", "loss")),
         key=lambda r: r["resolved_utc"] or r["created_utc"],
@@ -710,7 +726,7 @@ def current_streak(rows, agent):
 
 
 def streak_leader(rows):
-    """Агент с самой длинной текущей серией побед — для строки счёта."""
+    """Agent with the longest current win streak — for the score line."""
     best = None
     for agent in ("oracle", "guardian"):
         s = current_streak(rows, agent)
@@ -723,7 +739,7 @@ def streak_leader(rows):
 
 
 def build_footer(rows):
-    """Подвал поста, собирается кодом: строка счёта из леджера + сноска источников."""
+    """Post footer, assembled by code: score line from the ledger + sources note."""
     score = season_score(rows)
     o, g = score["oracle"], score["guardian"]
     season = (
@@ -760,10 +776,11 @@ def append_predictions(rows, predictions, current_price, now):
 
 def main():
     now = utcnow()
-    log(f"run started {iso(now)}, dry_run={DRY_RUN}")
+    mode = "dry" if DRY_RUN else "stage" if STAGE else "prod"
+    log(f"run started {iso(now)}, mode={mode}")
     client = anthropic.Anthropic()
 
-    # 1. Резолв истёкших прогнозов
+    # 1. Resolve expired predictions
     rows = load_ledger()
     klines = fetch_klines()
     current_price = fetch_current_price(klines)
@@ -771,35 +788,35 @@ def main():
     if resolved:
         save_ledger(rows)
         log(f"resolved {len(resolved)} prediction(s)")
-        # 2. Пост развязки
+        # 2. Resolution post
         tg_send_message(build_resolution_post(resolved, rows))
 
-    # Идемпотентность: в боевом режиме (schedule) не постим/не пишем повторно,
-    # если прогноз с сегодняшней датой (UTC) уже есть. DRY_RUN и явный FORCE=1
-    # обходят дедуп — превью и намеренный ручной прогон можно гонять всегда.
+    # Idempotency: a scheduled production run does not post/write twice if a
+    # prediction with today's UTC date already exists. DRY_RUN, STAGE and an
+    # explicit FORCE=1 all bypass the dedup — previews and staging can rerun freely.
     today = iso(now)[:10]
-    if not DRY_RUN and not FORCE and any(r["created_utc"][:10] == today for r in rows):
+    if not DRY_RUN and not STAGE and not FORCE and any(r["created_utc"][:10] == today for r in rows):
         log("already posted today, skipping debate/publish")
         return
 
-    # 3–4. Новости и дата-пейлоад
+    # 3-4. News and data payload
     news = fetch_news(now)
     log(f"news collected: {len(news)}")
     data_payload = build_data_payload(klines, current_price)
 
-    # 5. Классификатор: синтез конфигурации дня (day_signal) или None → fallback
+    # 5. Classifier: synthesize the day's configuration (day_signal) or None -> fallback
     signal = classify_news(client, news)
     log(f"day signal: {len(signal['headlines'])} headlines" if signal else "day signal: none (fallback mode)")
 
-    # 6. Track records за 14 дней
+    # 6. Track records over the last 14 days
     track_records = build_track_records(rows, now)
 
-    # 7. Дебат
+    # 7. Debate
     debate = run_debate(client, signal, data_payload, track_records, current_price)
 
-    # 8. Публикация: карточка (best-effort) → текст → опрос
-    #    Порядок: sendPhoto, затем текст, затем sendPoll. Падение генерации/отправки
-    #    карточки не роняет прогон — постим текст без фото и пишем warning.
+    # 8. Publish: card (best-effort) -> text -> poll
+    #    Order: sendPhoto, then text, then sendPoll. A card build/send failure
+    #    does not fail the run — post text without the photo and log a warning.
     try:
         import card as card_mod
         card_resolved = None
@@ -828,12 +845,12 @@ def main():
     tg_send_message(post_html + "\n\n" + DISCLAIMER)
     tg_send_poll(debate["predictions"])
 
-    # 9. Запись прогнозов в леджер
+    # 9. Append predictions to the ledger
     append_predictions(rows, debate["predictions"], current_price, now)
     save_ledger(rows)
     log("predictions appended to ledger")
 
-    # 10. Воскресный scorecard (UTC+8)
+    # 10. Sunday scorecard (UTC+8)
     if is_sunday_utc8(now):
         post_scorecard(client, rows, now)
 

@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       force:
-        description: "Post for real (channel + ledger). Off = dry run, nothing published."
+        description: "On = PRODUCTION (real channel + ledger). Off = STAGING channel, ledger_staging.csv."
         type: boolean
         default: false
 
@@ -31,9 +31,10 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHANNEL_ID: ${{ secrets.TG_CHANNEL_ID }}
+          TG_CHANNEL_ID_STAGING: ${{ secrets.TG_CHANNEL_ID_STAGING }}
           REPO_URL: ${{ github.server_url }}/${{ github.repository }}
-          # schedule -> real; manual -> dry unless force=true
-          DRY_RUN: ${{ github.event_name == 'schedule' && '0' || '1' }}
+          # schedule -> production; manual -> staging unless force=true -> production
+          STAGE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.force != 'true' && '1' || '0' }}
           FORCE: ${{ github.event.inputs.force == 'true' && '1' || '0' }}
         run: python main.py
 

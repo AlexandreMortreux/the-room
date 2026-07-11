@@ -3,3 +3,4 @@ __pycache__/
 *.pyc
 .env
 ledger_dry.csv
+ledger_staging.csv
