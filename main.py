@@ -17,7 +17,7 @@ import shutil
 import sys
 import tempfile
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import anthropic
 import requests
@@ -49,6 +49,8 @@ NEWS_URL = "https://t.me/s/markettwits"
 REPO_URL = os.environ.get("REPO_URL", "https://github.com/AlexandreMortreux/the-room")
 # direct link to the ledger file (overridable via LEDGER_URL)
 LEDGER_URL = os.environ.get("LEDGER_URL", f"{REPO_URL}/blob/main/ledger.csv")
+CTA = "⚔️ Pick your side — poll below ⬇"
+DAY0 = date(2026, 7, 9)  # first public English post; that day is Day 1
 DISCLAIMER = (
     "<i>Not financial advice. Predictions are an experiment — "
     f'<a href="{LEDGER_URL}">open ledger</a>.</i>'
@@ -307,6 +309,19 @@ def season_pair(rows):
     sc = season_score(rows)
     return (f"{sc['oracle']['wins']}-{sc['oracle']['losses']}",
             f"{sc['guardian']['wins']}-{sc['guardian']['losses']}")
+
+
+def build_tweet_draft(rows, predictions, now):
+    """Ready-to-post tweet draft: Day N + score line + today's bet + repo link."""
+    day_n = (now.date() - DAY0).days + 1
+    s0, s1 = season_pair(rows)
+    level = float({p["agent"]: p for p in predictions}["oracle"]["level"])
+    return "\n".join([
+        f"THE ROOM — Day {day_n}",
+        f"Season: Oracle {s0} | Guardian {s1}",
+        f"Today: Oracle above ${level:,.0f} vs Guardian below ${level:,.0f}",
+        REPO_URL,
+    ])
 
 
 # ---------------------------------------------------------------------------
@@ -600,13 +615,38 @@ def tg_send_photo(path, caption=None):
     raise RuntimeError(f"Telegram sendPhoto failed: {last_err}")
 
 
-def tg_send_message(html):
+def tg_send_message(html, chat_id=None):
     tg_call("sendMessage", {
-        "chat_id": tg_channel(),
+        "chat_id": chat_id or tg_channel(),
         "text": html,
         "parse_mode": "HTML",
         "disable_web_page_preview": True,
     })
+
+
+def tg_send_document(path, chat_id=None):
+    """Sends a PNG as an uncompressed file (for the draft tweet's card)."""
+    filename = os.path.basename(path)
+    if DRY_RUN:
+        print(f"\n[DRY_RUN] Telegram sendDocument -> {chat_id or tg_channel()}: {filename}")
+        return
+    token = os.environ["TG_BOT_TOKEN"]
+    url = f"https://api.telegram.org/bot{token}/sendDocument"
+    last_err = None
+    for attempt in range(2):
+        try:
+            with open(path, "rb") as f:
+                resp = requests.post(url, data={"chat_id": chat_id or tg_channel()},
+                                     files={"document": (filename, f)}, timeout=30)
+            body = resp.json()
+            if body.get("ok"):
+                return
+            last_err = body.get("description", resp.text)
+        except (requests.RequestException, ValueError, OSError) as e:
+            last_err = e
+        if attempt == 0:
+            time.sleep(3)
+    raise RuntimeError(f"Telegram sendDocument failed: {last_err}")
 
 
 def tg_send_poll(predictions):
@@ -764,7 +804,9 @@ def build_footer(rows):
     leader = streak_leader(rows)
     if leader:
         season += f" · Streak: {leader}"
-    return f"<i>{season}</i>\n<i>Sources: public news feeds</i>"
+    data_note = ("Data: Binance funding/OI · Fear&amp;Greed · price feed · "
+                 "News: public feeds")
+    return f"<i>{season}</i>\n<i>{data_note}</i>"
 
 
 def append_predictions(rows, predictions, current_price, now):
@@ -861,6 +903,7 @@ def main():
     #    Signal of the Day (text) -> Poll. Yesterday lives entirely in
     #    Template A, so the Today card carries no resolution info. A card
     #    build/send failure does not fail the run — text posts without it.
+    card_path = None
     try:
         import card as card_mod
         confs = {p["agent"]: float(p["confidence"]) for p in debate["predictions"]}
@@ -871,14 +914,30 @@ def main():
         tg_send_photo(card_path)
     except Exception as e:
         log(f"WARNING: card generation/post failed, posting text only: {e}")
+        card_path = None
 
     post_html = "\n\n".join([
         build_header(signal, now),
         debate["post_html"].strip(),
         build_footer(rows),
+        CTA,
     ])
     tg_send_message(post_html + "\n\n" + DISCLAIMER)
     tg_send_poll(debate["predictions"])
+
+    # 9. Draft tweet to the owner's private chat — production only, not staging.
+    #    Ready-to-post tweet text + the Today card as a file (in DRY_RUN this
+    #    prints instead of sending; STAGE skips it entirely).
+    if not STAGE:
+        try:
+            owner = os.environ.get("TG_OWNER_CHAT_ID", "")
+            if owner:
+                tg_send_message(build_tweet_draft(rows, debate["predictions"], now),
+                                chat_id=owner)
+                if card_path and os.path.exists(card_path):
+                    tg_send_document(card_path, chat_id=owner)
+        except Exception as e:
+            log(f"WARNING: draft tweet to owner failed: {e}")
 
     # 9. Append predictions to the ledger
     append_predictions(rows, debate["predictions"], current_price, now)

@@ -3,7 +3,11 @@ Assemble the daily THE ROOM post from the input data
 NUMBERS: every numeric value ONLY from data_payload as-is — price, low_7d,
 high_7d, weekly_change_pct, day_change_pct, funding_rate_pct, open_interest_btc,
 Fear & Greed. Do NOT compute, round or re-derive. Confidence is a single number
-per agent, shown as a percent (65%) — never split into components.
+per agent (0.55-0.80), shown as a percent (65%) — never split into components.
+Label each by bucket: 55-60 = lean, 61-70 = confident, 71-80 = conviction.
+Confidence must reflect the REAL divergence of the two methodologies — do NOT
+lazily cluster both values in the narrow 60-65 band; use the whole 55-80 range
+when the data warrants it. Honest 55/55 on a murky day is fine.
 LANGUAGE: English only, no mixing. Forbidden deal words anywhere: long, short,
 buy, sell, position, size. Only forecast language: above/below, closes, holds, level.
 Structure:
@@ -15,9 +19,12 @@ Structure:
    Then one sentence of intrigue. Do NOT write the title/date — code adds the
    "📡 Signal of the Day · <date>" header.
 2. Debate — EXACTLY 4 lines, alternating 🔮 Oracle / 🛡 Guardian / 🔮 Oracle /
-   🛡 Guardian. Each agent's FIRST line OPENS with its stance as one clause:
-   "Above $<level> — 65%." / "Below $<level> — 62%." — then the argument. HARD
-   LIMIT: max 2 sentences and ≤280 characters per line, one thought.
+   🛡 Guardian. Each agent's FIRST line OPENS with a stance line carrying its
+   role, direction, percent and bucket word:
+   "🔮 Oracle (contrarian) — Above $<level> · <NN>% · <bucket>"
+   "🛡 Guardian (skeptic) — Below $<level> · <NN>% · <bucket>"
+   then the argument. HARD LIMIT: max 2 sentences and ≤280 characters per line,
+   one thought.
 3. 📊 What it means — ONE line of the regime with a ▲◆▼ marker (regime, not
    action: "zone of interest in parts", not "buy").
 4. Predictions — two mutually exclusive calls against ONE level. Choose the level
@@ -29,7 +36,8 @@ Structure:
    agent's call, one line:
    "Driver: <main factor from data_payload> · Invalidation: <specific level or
    condition from the data at which this agent concedes>" — both from the payload,
-   not invented.
+   not invented. Each call ends with its bucket word, e.g.
+   "Oracle: BTC closes above $<level> — 65% · confident."
 Tone: alive, punchy, with jabs. Whole post (excluding code header/footer) ≤900
 characters, ≤30 seconds. Telegram HTML (<b>, <i>), no markdown. Do not add a
 scores line or a sources line — code appends them.

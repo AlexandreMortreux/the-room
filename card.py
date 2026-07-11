@@ -47,6 +47,16 @@ def _at_light(hex_c, l):
     return "#%02x%02x%02x" % (round(r*255), round(g*255), round(b*255))
 
 
+def conf_bucket(conf):
+    """Confidence bucket -> (word, chip fill lightness). Same hue, 3 intensities."""
+    p = conf * 100
+    if p <= 60:
+        return "lean", 0.11        # muted
+    if p <= 70:
+        return "confident", 0.18   # base
+    return "conviction", 0.27      # bright
+
+
 def _wfrac(t, fig):
     return t.get_window_extent(fig.canvas.get_renderer()).width / fig.bbox.width
 
@@ -98,10 +108,10 @@ def _chart(fig, closes, level, marker_px=None):
     ax.set_xticks([]); ax.set_yticks([]); ax.grid(False)
 
 
-def _chip(fig, chips, x, w, color, name, pct, edge=None, dim=False, scale=1.0):
+def _chip(fig, chips, x, w, color, name, pct, edge=None, dim=False, scale=1.0, light=0.18):
     fig.patches.append(FancyBboxPatch(
         (x, CHIP_Y), w, CHIP_H, boxstyle="round,pad=0,rounding_size=0.01",
-        transform=fig.transFigure, facecolor=_at_light(color, 0.10 if dim else 0.18),
+        transform=fig.transFigure, facecolor=_at_light(color, 0.09 if dim else light),
         edgecolor=(edge or "none"), linewidth=3 if edge else 0, zorder=1))
     cy = CHIP_Y + CHIP_H / 2
     col = MUTED if dim else TEXT
@@ -145,8 +155,11 @@ def build_today_card(out, price, preds, level, season, closes=None):
              color=(WIN if day_chg >= 0 else LOSS), fontsize=26, va="center", fontfamily=NUM)
     _chart(fig, closes, level)
     chips = []
-    _chip(fig, chips, 0.06, 0.42, ORACLE, "ORACLE · ▲ ABOVE · ", f"{round(preds['oracle']*100)}%")
-    _chip(fig, chips, 0.52, 0.42, GUARDIAN, "GUARDIAN · ▼ BELOW · ", f"{round(preds['guardian']*100)}%")
+    ow, ol = conf_bucket(preds["oracle"]); gw, gl = conf_bucket(preds["guardian"])
+    _chip(fig, chips, 0.06, 0.42, ORACLE, "ORACLE · ▲ ABOVE · ",
+          f"{round(preds['oracle']*100)}% · {ow}", light=ol)
+    _chip(fig, chips, 0.52, 0.42, GUARDIAN, "GUARDIAN · ▼ BELOW · ",
+          f"{round(preds['guardian']*100)}% · {gw}", light=gl)
     fig.text(0.06, 0.095, f"Season:  Oracle {season[0]}  |  Guardian {season[1]}",
              color=MUTED, fontsize=15, va="center")
     return _finish(fig, out, hero, chips)
@@ -169,9 +182,10 @@ def build_resolution_card(out, close_px, level, preds, winner, season, streak,
     def spec(agent):
         arrow = "▲ ABOVE" if agent == "oracle" else "▼ BELOW"
         color = ORACLE if agent == "oracle" else GUARDIAN
+        word, light = conf_bucket(preds[agent])
         name = f"{agent.upper()} · {arrow} ${level:,.0f} · "
-        pct = f"{round(preds[agent]*100)}%"
-        return color, name, pct
+        pct = f"{round(preds[agent]*100)}% · {word}"
+        return color, name, pct, light
     if winner in ("oracle", "guardian"):
         loser = "guardian" if winner == "oracle" else "oracle"
         order = [(winner, 0.54, dict(edge=WIN, scale=1.1)),
@@ -180,14 +194,15 @@ def build_resolution_card(out, close_px, level, preds, winner, season, streak,
         order.sort(key=lambda t: 0 if t[0] == "oracle" else 1)
         x = 0.06
         for agent, w, kw in order:
-            color, name, pct = spec(agent)
+            color, name, pct, light = spec(agent)
             if agent == winner:
                 pct += " ✓"
+                kw = dict(kw, light=light)
             _chip(fig, chips, x, w, color, name, pct, **kw)
             x += w + 0.02
     else:  # both missed (close exactly on the level) — show both dimmed
         for agent, x in (("oracle", 0.06), ("guardian", 0.52)):
-            color, name, pct = spec(agent)
+            color, name, pct, _ = spec(agent)
             _chip(fig, chips, x, 0.42, color, name, pct, dim=True)
 
     foot = f"Season:  Oracle {season[0]}  |  Guardian {season[1]}"
