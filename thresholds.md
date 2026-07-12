@@ -15,7 +15,7 @@ a moved goalpost. **Day 0 = first public English post.**
 ## SECONDARY — diagnostics (explain the result, never replace it)
 
 - Directional accuracy ≥ 55% over ≥ 20 resolved calls
-- Cumulative Brier of at least one agent < 0.25
+- Mean Brier (sum ÷ resolved) of at least one agent < 0.25
 - Agent records diverge (not both ~50/50)
 
 ---

@@ -428,6 +428,42 @@ def build_track_records(rows, now):
     return records
 
 
+def build_past_calls(rows, now):
+    """Verbatim-quotable past-call strings from the ledger (last 14 days).
+    Agents must copy these exactly — never recall a level from memory."""
+    cutoff = now - timedelta(days=14)
+    recent = sorted(
+        (r for r in rows if r["result"] in ("win", "loss")
+         and parse_iso(r["created_utc"]) >= cutoff),
+        key=lambda r: r["created_utc"],
+    )
+    return [
+        f"{r['created_utc'][:10]} · {r['agent'].capitalize()} · "
+        f"{r['direction']} ${float(r['level']):,.0f} → close "
+        f"${float(r['price_at_expiry']):,.0f} · {r['result']}"
+        for r in recent
+    ]
+
+
+def build_allowed_dollars(rows, data_payload, current_price):
+    """Every $-amount the debate may legitimately contain: live price + data
+    numbers + all ledger levels/closes. Guards against invented/misquoted levels."""
+    vals = {float(current_price)}
+    for k in ("low_7d", "high_7d", "prev_daily_close"):
+        v = data_payload.get(k)
+        if isinstance(v, (int, float)):
+            vals.add(float(v))
+    dc = data_payload.get("daily_closes_7d")
+    if isinstance(dc, list):
+        vals.update(float(c["close"]) for c in dc)
+    for r in rows:
+        if r["result"] in ("win", "loss"):
+            vals.add(float(r["level"]))
+            if r["price_at_expiry"]:
+                vals.add(float(r["price_at_expiry"]))
+    return vals
+
+
 # ---------------------------------------------------------------------------
 # Claude: strict-JSON calls, one retry with the error text
 # ---------------------------------------------------------------------------
@@ -505,7 +541,10 @@ def classify_news(client, news):
     return data.get("day_signal")
 
 
-def make_debate_validator(current_price):
+DOLLAR_RE = re.compile(r"\$([\d,]+(?:\.\d+)?)")
+
+
+def make_debate_validator(current_price, allowed_dollars):
     def validate(data):
         if not isinstance(data.get("post_html"), str) or not data["post_html"].strip():
             raise ValueError("'post_html' must be a non-empty string")
@@ -538,23 +577,36 @@ def make_debate_validator(current_price):
                     f"current price {current_price:.0f} (use yesterday's high/low, a "
                     f"range boundary or a round number), not the current price"
                 )
+        # Every $-amount must be a known number (data payload, a ledger level/close,
+        # or the watershed) — past calls must be quoted verbatim, not from memory.
+        allowed = set(allowed_dollars) | {float(p["level"]) for p in preds}
+        for raw in DOLLAR_RE.findall(data["post_html"]):
+            v = float(raw.replace(",", ""))
+            if not any(abs(v - a) <= max(2.0, 0.0005 * a) for a in allowed):
+                raise ValueError(
+                    f"dollar value ${v:,.0f} in the debate matches no ledger level/close "
+                    f"or data_payload number; quote past calls verbatim from past_calls "
+                    f"and use only numbers from the data"
+                )
     return validate
 
 
-def run_debate(client, signal, data_payload, track_records, current_price):
+def run_debate(client, signal, data_payload, track_records, current_price,
+               past_calls, allowed_dollars):
     template = "orchestrator.txt" if signal else "fallback.txt"
     system = read_prompt("oracle.txt") + "\n\n" + read_prompt("guardian.txt")
     inputs = {
         "day_signal": signal,
         "data_payload": data_payload,
         "track_records": track_records,
+        "past_calls": past_calls,
     }
     user = read_prompt(template) + "\n\nInput data:\n" + json.dumps(
         inputs, ensure_ascii=False, indent=1
     )
     return call_claude_json(
         client, MODEL_DEBATE, system, user,
-        max_tokens=2000, validate=make_debate_validator(current_price),
+        max_tokens=2000, validate=make_debate_validator(current_price, allowed_dollars),
     )
 
 
@@ -715,7 +767,7 @@ def build_scorecard_stats(rows, now):
             "wins": s["wins"],
             "losses": s["losses"],
             "accuracy_pct": round(100 * s["wins"] / s["resolved"], 1) if s["resolved"] else None,
-            "cumulative_brier": round(s["brier_sum"], 4),
+            "mean_brier": round(s["brier_sum"] / s["resolved"], 3) if s["resolved"] else None,
             "streak": streak(agent),
         }
     week_scored = [r for r in week if r["brier"]]
@@ -736,9 +788,10 @@ def post_scorecard(client, rows, now):
     system = (
         "You are the editor of THE ROOM, a daily BTC digest. From the data below, "
         "write the Sunday scorecard post in English: title '🏆 Weekly Scorecard', "
-        "season W/L for both agents (🔮 Oracle and 🛡 Guardian), accuracy %, cumulative "
-        "Brier, current streak, and the week's best and worst call with facts. Include "
-        "one short line explaining Brier: 'lower = better calibrated'. Dry, lightly ironic, "
+        "season W/L for both agents (🔮 Oracle and 🛡 Guardian), accuracy %, mean "
+        "Brier (use the mean_brier value as-is, format 0.XXX), current streak, and the "
+        "week's best and worst call with facts. Include one short line explaining Brier: "
+        "'mean Brier, lower = better calibrated'. Dry, lightly ironic, "
         "≤20 seconds to read. Telegram HTML (<b>, <i>), no markdown. English only, no "
         "language mixing. Output the post text only, no preamble."
     )
@@ -902,11 +955,14 @@ def main():
     signal = classify_news(client, news)
     log(f"day signal: {len(signal['headlines'])} headlines" if signal else "day signal: none (fallback mode)")
 
-    # 6. Track records over the last 14 days
+    # 6. Track records + verbatim past-call strings + allowed dollar amounts
     track_records = build_track_records(rows, now)
+    past_calls = build_past_calls(rows, now)
+    allowed_dollars = build_allowed_dollars(rows, data_payload, current_price)
 
     # 7. Debate
-    debate = run_debate(client, signal, data_payload, track_records, current_price)
+    debate = run_debate(client, signal, data_payload, track_records, current_price,
+                        past_calls, allowed_dollars)
 
     # 8. Publish: Today card (Template B, best-effort) -> text -> poll.
     #    Morning order overall: Resolution card+caption -> Today card ->
