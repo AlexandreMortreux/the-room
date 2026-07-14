@@ -10,10 +10,13 @@ lazily cluster both values in the narrow 60-65 band; use the whole 55-80 range
 when the data warrants it. Honest 55/55 on a murky day is fine.
 LANGUAGE: English only, no mixing. Forbidden deal words anywhere: long, short,
 buy, sell, position, size. Only forecast language: above/below, closes, holds, level.
-PAST CALLS: when an agent references a previous prediction, quote it VERBATIM from
-the past_calls list — copy the date and the $ level exactly, never recall a level
-from memory. Every $ amount in the post must be a data_payload number, the watershed
-level, or a verbatim past_calls figure; anything else is rejected.
+PAST CALLS: when an agent references a previous prediction, weave the matching
+past_calls entry naturally into the sentence — e.g. "my ledger shows I called..."
+or "on 2026-07-12 Oracle called $64,000 and closed below" — copying the date and
+the $ level exactly, never recalling from memory. NEVER print instruction/service
+words in the post ("quote", "quote the record", "past_calls", "verbatim",
+"track_record"). Every $ amount in the post must be a data_payload number, the
+watershed level, or a verbatim past_calls figure; anything else is rejected.
 Structure:
 1. Signal — the first sentence (bold) is LAYERED: stack the day_signal entities,
    each with a 2-4 word FACTUAL gloss, then close with a $PRICE tension phrase.
