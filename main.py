@@ -17,6 +17,7 @@ import shutil
 import sys
 import tempfile
 import time
+import traceback
 from datetime import date, datetime, timedelta, timezone
 
 import anthropic
@@ -482,10 +483,10 @@ def extract_json(text):
     return json.loads(text[start:end + 1])
 
 
-def call_claude_json(client, model, system, user, max_tokens, validate):
+def call_claude_json(client, model, system, user, max_tokens, validate, max_attempts=2):
     messages = [{"role": "user", "content": user}]
     last_err = None
-    for attempt in range(2):
+    for attempt in range(max_attempts):
         resp = client.messages.create(
             model=model, max_tokens=max_tokens, system=system, messages=messages
         )
@@ -496,7 +497,7 @@ def call_claude_json(client, model, system, user, max_tokens, validate):
             return data
         except (ValueError, KeyError, TypeError) as e:
             last_err = e
-            log(f"model JSON invalid (attempt {attempt + 1}): {e}")
+            log(f"model JSON invalid (attempt {attempt + 1}/{max_attempts}): {e}")
             messages = messages + [
                 {"role": "assistant", "content": text},
                 {
@@ -507,7 +508,7 @@ def call_claude_json(client, model, system, user, max_tokens, validate):
                     ),
                 },
             ]
-    raise RuntimeError(f"model returned invalid JSON after retry: {last_err}")
+    raise RuntimeError(f"model returned invalid JSON after {max_attempts} attempts: {last_err}")
 
 
 def validate_classifier(data):
@@ -607,6 +608,7 @@ def run_debate(client, signal, data_payload, track_records, current_price,
     return call_claude_json(
         client, MODEL_DEBATE, system, user,
         max_tokens=2000, validate=make_debate_validator(current_price, allowed_dollars),
+        max_attempts=3,
     )
 
 
@@ -884,6 +886,58 @@ def append_predictions(rows, predictions, current_price, now):
         })
 
 
+def alert_owner(text):
+    """Best-effort failure alert to the owner's private chat (TG_OWNER_CHAT_ID)."""
+    owner = os.environ.get("TG_OWNER_CHAT_ID", "")
+    if not owner:
+        return
+    try:
+        tg_send_message(text, chat_id=owner)
+    except Exception as e:
+        log(f"WARNING: owner alert failed: {e}")
+
+
+def run_step(name, fn):
+    """Run one pipeline step in isolation: on failure log the full traceback and
+    alert the owner, but let the rest of the run continue. Returns True on success."""
+    try:
+        fn()
+        return True
+    except Exception as e:
+        log(f"WARNING: step '{name}' failed: {e}\n{traceback.format_exc()}")
+        alert_owner(f"⚠️ THE ROOM: step {name} failed — {e}")
+        return False
+
+
+def post_resolution(resolved, rows, now):
+    """Template A resolution card with the full text as caption (one message);
+    if the card fails, still post the text so the resolution is never lost."""
+    resolution_text = build_resolution_post(resolved, rows)
+    try:
+        import card as card_mod
+        wrow = next((r for r in resolved if r["result"] == "win"), None)
+        winner = wrow["agent"] if wrow else None
+        close_px = float(resolved[0]["price_at_expiry"])
+        fname = (f"theroom_{now:%Y-%m-%d}_"
+                 f"{winner.upper() + '-W' if winner else 'NO-W'}_{close_px:.0f}.png")
+        leader = streak_leader(rows)
+        path = os.path.join(tempfile.gettempdir(), fname)
+        card_mod.build_resolution_card(
+            path, close_px=close_px, level=float(resolved[0]["level"]),
+            preds={r["agent"]: float(r["confidence"]) for r in resolved}, winner=winner,
+            season=season_pair(rows),
+            streak=leader.replace("🔮 ", "").replace("🛡 ", "") if leader else None,
+            period_label=f"Resolution · {now - timedelta(hours=24):%b %d} daily close",
+        )
+        caption = resolution_text if len(resolution_text) <= 1024 else None
+        tg_send_photo(path, caption=caption)
+        if caption is None:
+            tg_send_message(resolution_text)
+    except Exception as e:
+        log(f"WARNING: resolution card failed, posting text only: {e}")
+        tg_send_message(resolution_text)
+
+
 def main():
     now = utcnow()
     mode = "dry" if DRY_RUN else "stage" if STAGE else "prod"
@@ -908,35 +962,8 @@ def main():
     if resolved:
         save_ledger(rows)
         log(f"resolved {len(resolved)} prediction(s)")
-        # 2. Resolution — Template A card with the full text as its caption:
-        #    one message instead of two. Card failure falls back to text only.
-        resolution_text = build_resolution_post(resolved, rows)
-        try:
-            import card as card_mod
-            wrow = next((r for r in resolved if r["result"] == "win"), None)
-            winner = wrow["agent"] if wrow else None
-            close_px = float(resolved[0]["price_at_expiry"])
-            fname = (f"theroom_{now:%Y-%m-%d}_"
-                     f"{winner.upper() + '-W' if winner else 'NO-W'}_{close_px:.0f}.png")
-            period = f"Resolution · {now - timedelta(hours=24):%b %d} daily close"
-            leader = streak_leader(rows)
-            card_mod.build_resolution_card(
-                os.path.join(tempfile.gettempdir(), fname),
-                close_px=close_px,
-                level=float(resolved[0]["level"]),
-                preds={r["agent"]: float(r["confidence"]) for r in resolved},
-                winner=winner,
-                season=season_pair(rows),
-                streak=leader.replace("🔮 ", "").replace("🛡 ", "") if leader else None,
-                period_label=period,
-            )
-            caption = resolution_text if len(resolution_text) <= 1024 else None
-            tg_send_photo(os.path.join(tempfile.gettempdir(), fname), caption=caption)
-            if caption is None:
-                tg_send_message(resolution_text)
-        except Exception as e:
-            log(f"WARNING: resolution card failed, posting text only: {e}")
-            tg_send_message(resolution_text)
+        # 2. Resolution — isolated step (Template A card + caption).
+        run_step("resolution", lambda: post_resolution(resolved, rows, now))
 
     # Idempotency: a scheduled production run does not post/write twice if a
     # prediction with today's UTC date already exists. DRY_RUN, STAGE and an
@@ -951,8 +978,12 @@ def main():
     log(f"news collected: {len(news)}")
     data_payload = build_data_payload(klines, current_price)
 
-    # 5. Classifier: synthesize the day's configuration (day_signal) or None -> fallback
-    signal = classify_news(client, news)
+    # 5. Classifier (soft): a failure falls back to a quiet-market post, no crash
+    try:
+        signal = classify_news(client, news)
+    except Exception as e:
+        log(f"WARNING: classifier failed, using fallback: {e}")
+        signal = None
     log(f"day signal: {len(signal['headlines'])} headlines" if signal else "day signal: none (fallback mode)")
 
     # 6. Track records + verbatim past-call strings + allowed dollar amounts
@@ -960,59 +991,65 @@ def main():
     past_calls = build_past_calls(rows, now)
     allowed_dollars = build_allowed_dollars(rows, data_payload, current_price)
 
-    # 7. Debate
-    debate = run_debate(client, signal, data_payload, track_records, current_price,
-                        past_calls, allowed_dollars)
-
-    # 8. Publish: Today card (Template B, best-effort) -> text -> poll.
-    #    Morning order overall: Resolution card+caption -> Today card ->
-    #    Signal of the Day (text) -> Poll. Yesterday lives entirely in
-    #    Template A, so the Today card carries no resolution info. A card
-    #    build/send failure does not fail the run — text posts without it.
-    card_path = None
+    # 7. Debate — prerequisite for the Today card / signal / poll / draft. On
+    #    failure, alert and skip those dependents instead of crashing the run.
     try:
-        import card as card_mod
-        confs = {p["agent"]: float(p["confidence"]) for p in debate["predictions"]}
-        level = float(debate["predictions"][0]["level"])
-        card_path = os.path.join(
-            tempfile.gettempdir(), f"theroom_{now:%Y-%m-%d}_bet_{level:.0f}.png")
-        card_mod.build_today_card(card_path, current_price, confs, level, season_pair(rows))
-        tg_send_photo(card_path)
+        debate = run_debate(client, signal, data_payload, track_records, current_price,
+                            past_calls, allowed_dollars)
     except Exception as e:
-        log(f"WARNING: card generation/post failed, posting text only: {e}")
-        card_path = None
+        log(f"WARNING: step 'debate' failed: {e}\n{traceback.format_exc()}")
+        alert_owner(f"⚠️ THE ROOM: step debate failed — {e}")
+        debate = None
 
-    post_html = "\n\n".join([
-        build_header(signal, now),
-        debate["post_html"].strip(),
-        build_footer(rows),
-        CTA,
-    ])
-    tg_send_message(post_html + "\n\n" + DISCLAIMER)
-    tg_send_poll(debate["predictions"])
+    # 8. Publish — each step isolated (traceback + owner alert on failure, then
+    #    continue). Order: Today card -> Signal post -> Poll -> draft tweet.
+    if debate:
+        card = {"path": None}
 
-    # 9. Draft tweet to the owner's private chat — production only, not staging.
-    #    Ready-to-post tweet text + the Today card as a file (in DRY_RUN this
-    #    prints instead of sending; STAGE skips it entirely).
-    if not STAGE:
-        try:
-            owner = os.environ.get("TG_OWNER_CHAT_ID", "")
-            if owner:
-                tg_send_message(build_tweet_draft(rows, debate["predictions"], now),
-                                chat_id=owner)
-                if card_path and os.path.exists(card_path):
-                    tg_send_document(card_path, chat_id=owner)
-        except Exception as e:
-            log(f"WARNING: draft tweet to owner failed: {e}")
+        def _today_card():
+            import card as card_mod
+            confs = {p["agent"]: float(p["confidence"]) for p in debate["predictions"]}
+            level = float(debate["predictions"][0]["level"])
+            path = os.path.join(tempfile.gettempdir(), f"theroom_{now:%Y-%m-%d}_bet_{level:.0f}.png")
+            card_mod.build_today_card(path, current_price, confs, level, season_pair(rows))
+            tg_send_photo(path)
+            card["path"] = path
+        run_step("today_card", _today_card)
 
-    # 9. Append predictions to the ledger
-    append_predictions(rows, debate["predictions"], current_price, now)
-    save_ledger(rows)
-    log("predictions appended to ledger")
+        def _signal_post():
+            tg_send_message("\n\n".join([
+                build_header(signal, now), debate["post_html"].strip(),
+                build_footer(rows), CTA]) + "\n\n" + DISCLAIMER)
+        signal_ok = run_step("signal_post", _signal_post)
 
-    # 10. Sunday scorecard (UTC+8)
+        # Hard dependency: no poll without the signal post.
+        if signal_ok:
+            run_step("poll", lambda: tg_send_poll(debate["predictions"]))
+        else:
+            log("skipping poll: signal post did not succeed")
+
+        def _ledger_write():
+            append_predictions(rows, debate["predictions"], current_price, now)
+            save_ledger(rows)
+            log("predictions appended to ledger")
+        run_step("ledger_write", _ledger_write)
+
+        # 9. Draft tweet to the owner — production only, skipped in STAGE.
+        if not STAGE:
+            def _draft_tweet():
+                owner = os.environ.get("TG_OWNER_CHAT_ID", "")
+                if not owner:
+                    return
+                tg_send_message(build_tweet_draft(rows, debate["predictions"], now), chat_id=owner)
+                if card["path"] and os.path.exists(card["path"]):
+                    tg_send_document(card["path"], chat_id=owner)
+            run_step("draft_tweet", _draft_tweet)
+    else:
+        log("debate unavailable — skipping today card, signal, poll, draft tweet")
+
+    # 10. Sunday scorecard (UTC+8) — independent isolated step.
     if is_sunday_utc8(now):
-        post_scorecard(client, rows, now)
+        run_step("scorecard", lambda: post_scorecard(client, rows, now))
 
     log("run finished")
 
@@ -1021,5 +1058,6 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        log(f"FATAL: {e}")
+        log(f"FATAL: {e}\n{traceback.format_exc()}")
+        alert_owner(f"🛑 THE ROOM: run FAILED before/at a prerequisite — {e}")
         sys.exit(1)
