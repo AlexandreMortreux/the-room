@@ -330,7 +330,9 @@ def build_tweet_draft(rows, predictions, now):
 # ---------------------------------------------------------------------------
 
 def resolve_pending(rows, klines, now):
-    """Sets win/loss and Brier from the first daily close after expires_utc."""
+    """Sets win/loss and Brier from the first daily close STRICTLY after
+    expires_utc (close_time > expires_utc). If no such closed candle exists yet,
+    the prediction stays pending — no early resolution, no exceptions."""
     if not klines:
         log("klines unavailable, resolution skipped")
         return []
@@ -342,9 +344,9 @@ def resolve_pending(rows, klines, now):
         expires = parse_iso(row["expires_utc"])
         if expires > now:
             continue
-        candle = next((k for k in finished if k[6] / 1000 >= expires.timestamp()), None)
+        candle = next((k for k in finished if k[6] / 1000 > expires.timestamp()), None)
         if candle is None:
-            continue  # the daily candle hasn't closed yet — stays pending
+            continue  # no close strictly after expiry yet — stays pending
         close = float(candle[4])
         level = float(row["level"])
         win = close > level if row["direction"] == "above" else close < level

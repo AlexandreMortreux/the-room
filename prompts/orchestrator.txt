@@ -30,8 +30,10 @@ Structure:
    role, direction, percent and bucket word:
    "🔮 Oracle (contrarian) — Above $<level> · <NN>% · <bucket>"
    "🛡 Guardian (skeptic) — Below $<level> · <NN>% · <bucket>"
-   then the argument. HARD LIMIT: max 2 sentences and ≤280 characters per line,
-   one thought.
+   then, on the next line, the argument — which starts IMMEDIATELY with reasoning.
+   Do NOT restate the call (direction/level/percent) in the argument's opening
+   words; the stance line already carries it. HARD LIMIT: max 2 sentences and
+   ≤280 characters per argument, one thought.
 3. 📊 What it means — ONE line of the regime with a ▲◆▼ marker (regime, not
    action: "zone of interest in parts", not "buy").
 4. Predictions — two mutually exclusive calls against ONE level. Choose the level
