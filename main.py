@@ -594,20 +594,25 @@ def make_debate_validator(current_price, allowed_dollars):
 
 def run_debate(client, signal, data_payload, track_records, current_price,
                past_calls, allowed_dollars):
-    template = "orchestrator.txt" if signal else "fallback.txt"
     system = read_prompt("oracle.txt") + "\n\n" + read_prompt("guardian.txt")
+    # The orchestrator (full structure + JSON schema) is ALWAYS included; on a
+    # quiet day the fallback guidance is appended, so fallback posts get the same
+    # schema instead of the model guessing the format.
+    instructions = read_prompt("orchestrator.txt")
+    if not signal:
+        instructions += "\n\n--- QUIET MARKET (no signal today) ---\n" + read_prompt("fallback.txt")
     inputs = {
         "day_signal": signal,
         "data_payload": data_payload,
         "track_records": track_records,
         "past_calls": past_calls,
     }
-    user = read_prompt(template) + "\n\nInput data:\n" + json.dumps(
+    user = instructions + "\n\nInput data:\n" + json.dumps(
         inputs, ensure_ascii=False, indent=1
     )
     return call_claude_json(
         client, MODEL_DEBATE, system, user,
-        max_tokens=2000, validate=make_debate_validator(current_price, allowed_dollars),
+        max_tokens=2500, validate=make_debate_validator(current_price, allowed_dollars),
         max_attempts=3,
     )
 
