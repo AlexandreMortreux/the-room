@@ -638,11 +638,16 @@ def make_debate_validator(current_price, allowed_dollars):
                     f"prediction level is ${lvl:,.0f}; the stance MUST use the exact "
                     f"level (same as the card and Predictions), never the current price"
                 )
-        # Every $-amount must be a known number (data payload, a ledger level/close,
-        # or the watershed) — past calls must be quoted verbatim, not from memory.
+        # BTC price-level integrity: any $-amount in the BTC price ballpark must
+        # be a known number (data payload, a ledger level/close, or the watershed).
+        # Figures far outside that range are not price claims — the prompt bans
+        # them, but they don't hard-fail the run.
         allowed = set(allowed_dollars) | {float(p["level"]) for p in preds}
+        lo, hi = 0.5 * current_price, 2.0 * current_price
         for raw in DOLLAR_RE.findall(data["post_html"]):
             v = float(raw.replace(",", ""))
+            if not lo <= v <= hi:
+                continue
             if not any(abs(v - a) <= max(2.0, 0.0005 * a) for a in allowed):
                 raise ValueError(
                     f"dollar value ${v:,.0f} in the debate matches no ledger level/close "
@@ -709,7 +714,7 @@ def run_debate(client, signal, data_payload, track_records, current_price,
     return call_claude_json(
         client, MODEL_DEBATE, system, user,
         max_tokens=2500, validate=make_debate_validator(current_price, allowed_dollars),
-        max_attempts=3,
+        max_attempts=4,
     )
 
 

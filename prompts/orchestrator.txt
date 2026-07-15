@@ -2,7 +2,10 @@ Assemble the daily THE ROOM post from the input data
 (day_signal, data_payload, track_records).
 NUMBERS: every numeric value ONLY from data_payload as-is — price, low_7d,
 high_7d, weekly_change_pct, day_change_pct, funding_rate_pct, open_interest_btc,
-Fear & Greed. Do NOT compute, round or re-derive. Confidence is a single number
+Fear & Greed. The ONLY dollar figures anywhere in the post are the current price,
+the watershed level, and past-call levels — never invent any other $ amount (no
+macro figures, no billions). Translate metrics into WORDS, not new numbers.
+Do NOT compute, round or re-derive. Confidence is a single number
 per agent (0.55-0.80), shown as a percent (65%) — never split into components.
 Label each by bucket: 55-60 = lean, 61-70 = confident, 71-80 = conviction.
 Confidence must reflect the REAL divergence of the two methodologies — do NOT
