@@ -60,9 +60,12 @@ Structure:
 Tone: alive, punchy, with jabs. Whole post (excluding code header/footer) ≤900
 characters, ≤30 seconds. Telegram HTML (<b>, <i>), no markdown. Do not add a
 scores line or a sources line — code appends them.
+Each prediction also carries "driver": one plain-language reason (≤55 characters,
+no jargon, no $ figure) that goes on the card, e.g. "Fear is at an extreme" or
+"The trend needs more time".
 Output — strict JSON, no preamble:
 {"post_html":"...","predictions":[
 {"agent":"oracle","asset":"BTC","direction":"above","level":N,
-"horizon_h":24,"confidence":0.NN},
+"horizon_h":24,"confidence":0.NN,"driver":"..."},
 {"agent":"guardian","asset":"BTC","direction":"below","level":N,
-"horizon_h":24,"confidence":0.NN}]}
+"horizon_h":24,"confidence":0.NN,"driver":"..."}]}

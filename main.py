@@ -313,6 +313,14 @@ def day_number(now):
     return (now.date() - DAY0).days + 1
 
 
+def case_number(rows, created_utc=None):
+    """1-based index of a daily prediction pair; a new pair gets the next number."""
+    dates = sorted({r["created_utc"] for r in rows if r.get("horizon_h") == "24"})
+    if created_utc in dates:
+        return dates.index(created_utc) + 1
+    return len(dates) + 1
+
+
 def build_season_line(rows, now, emoji=True):
     """Unified score line, one source everywhere:
     'Season · Day N: 🔮 Oracle X : Y Guardian 🛡' (X:Y = each agent's wins).
@@ -403,7 +411,9 @@ def build_resolution_post(resolved, rows, now):
     else:
         point_line = "Nobody scores — both missed."
 
-    lines = [f"🏁 <b>Resolution</b>: BTC daily close — <b>${close:,.0f}</b>", ""]
+    case_no = case_number(rows, resolved[0]["created_utc"])
+    lines = [f"<b>Case №{case_no} closed.</b>",
+             f"🏁 <b>Resolution</b>: BTC daily close — <b>${close:,.0f}</b>", ""]
     for r in resolved:
         emoji = "🔮" if r["agent"] == "oracle" else "🛡"
         arrow = "above" if r["direction"] == "above" else "below"
@@ -1009,16 +1019,19 @@ def post_resolution(resolved, rows, now):
         wrow = next((r for r in resolved if r["result"] == "win"), None)
         winner = wrow["agent"] if wrow else None
         close_px = float(resolved[0]["price_at_expiry"])
-        fname = (f"theroom_{now:%Y-%m-%d}_"
-                 f"{winner.upper() + '-W' if winner else 'NO-W'}_{close_px:.0f}.png")
+        level = float(resolved[0]["level"])
+        case_no = case_number(rows, resolved[0]["created_utc"])
+        fname = (f"theroom_{now:%Y-%m-%d}_case{case_no}_closed_"
+                 f"{winner.upper() if winner else 'SPLIT'}.png")
         leader = streak_leader(rows)
         path = os.path.join(tempfile.gettempdir(), fname)
         card_mod.build_resolution_card(
-            path, close_px=close_px, level=float(resolved[0]["level"]),
-            preds={r["agent"]: float(r["confidence"]) for r in resolved}, winner=winner,
+            path, close_px=close_px, level=level, winner=winner,
+            preds={r["agent"]: float(r["confidence"]) for r in resolved},
+            missed_by=abs(close_px - level), case_no=case_no,
             season_line=build_season_line(rows, now, emoji=False),
             streak=leader.replace("🔮 ", "").replace("🛡 ", "") if leader else None,
-            period_label=f"Resolution · {now - timedelta(hours=24):%b %d} daily close",
+            date_label=f"{now - timedelta(hours=24):%b %d}",
         )
         caption = resolution_text if len(resolution_text) <= 1024 else None
         tg_send_photo(path, caption=caption)
@@ -1115,11 +1128,15 @@ def main():
 
         def _today_card():
             import card as card_mod
-            confs = {p["agent"]: float(p["confidence"]) for p in debate["predictions"]}
             level = float(debate["predictions"][0]["level"])
-            path = os.path.join(tempfile.gettempdir(), f"theroom_{now:%Y-%m-%d}_bet_{level:.0f}.png")
-            card_mod.build_today_card(path, current_price, confs, level,
-                                      build_season_line(rows, now, emoji=False))
+            case_no = case_number(rows)
+            wk = build_weekly_line(rows, current_price)
+            path = os.path.join(tempfile.gettempdir(),
+                                f"theroom_{now:%Y-%m-%d}_case{case_no}_bet.png")
+            card_mod.build_today_card(
+                path, current_price, debate["predictions"], level, case_no,
+                build_season_line(rows, now, emoji=False),
+                wk.replace("📅 ", "") if wk else None)
             tg_send_photo(path)
             card["path"] = path
         run_step("today_card", _today_card)
