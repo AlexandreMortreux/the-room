@@ -74,6 +74,7 @@ def load_closes(n=14):
 
 def _sparkline(fig, rect, closes, level):
     ax = fig.add_axes(rect); ax.patch.set_visible(False)
+    ax.set_zorder(5)  # draw above the context block behind it
     lo, hi = min(min(closes), level), max(max(closes), level)
     pad = (hi - lo) * 0.20 or hi * 0.01
     ax.set_ylim(lo - pad, hi + pad); ax.set_xlim(-0.3, len(closes) - 0.7)
@@ -85,57 +86,66 @@ def _sparkline(fig, rect, closes, level):
     ax.set_xticks([]); ax.set_yticks([]); ax.grid(False)
 
 
+CTX_BG = "#17171A"  # a hair lighter than the background
+
+
 def build_today_card(out, price, predictions, level, case_no, season_line,
                      weekly_line=None, closes=None):
-    """Template B — two symmetric bet panels; the shared level is the hero."""
+    """Template B — two direction-coloured bet panels (green UP / red DOWN);
+    the shared level is the hero, a full-width context block holds price+trend."""
     if closes is None:
         closes = load_closes(14)
     day_chg = (closes[-1] / closes[-2] - 1) * 100
     by = {p["agent"]: p for p in predictions}
     fig = plt.figure(figsize=(10.8, 10.8), dpi=100, facecolor=BG)
 
-    # header
-    fig.text(0.06, 0.955, " ".join("THE ROOM") + f"   ·   CASE No. {case_no}   ·   "
-             + datetime.now(timezone.utc).strftime("%d %b %Y").upper(),
+    # header: brand + case on the left, date on the right
+    fig.text(0.05, 0.955, " ".join("THE ROOM") + f"   ·   CASE No. {case_no}",
              color=MUTED, fontsize=15, va="center")
+    fig.text(0.95, 0.955, datetime.now(timezone.utc).strftime("%d %b %Y").upper(),
+             color=MUTED, fontsize=15, ha="right", va="center")
 
-    # two symmetric panels (violet left / amber right); level is the biggest glyph
-    PY, PH = 0.455, 0.44
+    # two panels: green = UP/above (Oracle), red = DOWN/below (Guardian)
+    PY, PH = 0.575, 0.34
     def panel(px, agent, color, updown, arrow, relation):
         fig.patches.append(FancyBboxPatch(
             (px, PY), 0.43, PH, boxstyle="round,pad=0,rounding_size=0.015",
-            transform=fig.transFigure, facecolor=_at_light(color, 0.18),
+            transform=fig.transFigure, facecolor=_at_light(color, 0.16),
             edgecolor="none", zorder=1))
         cx = px + 0.215
         T = PY + PH
-        fig.text(cx, T - 0.045, f"{agent.upper()}  {arrow} {updown}", color=color,
+        fig.text(cx, T - 0.045, f"{agent.upper()}   {arrow} {updown}", color=color,
                  fontsize=23, fontweight="bold", ha="center", va="center", zorder=3)
-        fig.text(cx, T - 0.095, relation, color=MUTED, fontsize=15, ha="center",
+        fig.text(cx, T - 0.090, relation, color=MUTED, fontsize=15, ha="center",
                  va="center", zorder=3)
-        big = fig.text(cx, T - 0.175, f"${level:,.0f}", color=TEXT, fontsize=56,
+        big = fig.text(cx, T - 0.160, f"${level:,.0f}", color=TEXT, fontsize=54,
                        fontweight="bold", ha="center", va="center", zorder=3, fontfamily=NUM)
         _fit(fig, big, 0.40)
         p = by[agent]
-        fig.text(cx, T - 0.255, f"{round(p['confidence']*100)}% · {conf_bucket(p['confidence'])}",
+        fig.text(cx, T - 0.230, f"{round(p['confidence']*100)}% · {conf_bucket(p['confidence'])}",
                  color=TEXT, fontsize=21, fontweight="bold", ha="center", va="center", zorder=3)
         drv = str(p.get("driver", "")).strip()
         if drv:
             for i, ln in enumerate(textwrap.wrap(drv, width=30)[:2]):
-                fig.text(cx, T - 0.315 - i * 0.035, ln, color=MUTED, fontsize=14,
+                fig.text(cx, T - 0.278 - i * 0.033, ln, color=MUTED, fontsize=14,
                          ha="center", va="center", zorder=3)
-    panel(0.05, "oracle", ORACLE, "UP", "▲", "ABOVE")
-    panel(0.52, "guardian", GUARDIAN, "DOWN", "▼", "BELOW")
+    panel(0.05, "oracle", WIN, "UP", "▲", "ABOVE")
+    panel(0.52, "guardian", LOSS, "DOWN", "▼", "BELOW")
 
-    # context strip + 7-day sparkline (level dashed through it)
-    fig.text(0.5, 0.395, f"BTC now ${price:,.0f}  ·  {day_chg:+.2f}% today",
-             color=TEXT, fontsize=17, ha="center", va="center")
-    _sparkline(fig, [0.30, 0.305, 0.40, 0.06], closes[-7:], level)
+    # full-width context block (slightly lighter than bg): price + 7-day sparkline
+    # zorder 0 keeps it behind the sparkline axes (which draws above fig patches).
+    fig.patches.append(FancyBboxPatch(
+        (0.05, 0.355), 0.90, 0.165, boxstyle="round,pad=0,rounding_size=0.015",
+        transform=fig.transFigure, facecolor=CTX_BG, edgecolor="none", zorder=0))
+    fig.text(0.5, 0.492, f"BTC now ${price:,.0f}   ·   {day_chg:+.2f}% today",
+             color=TEXT, fontsize=17, ha="center", va="center", zorder=3)
+    _sparkline(fig, [0.30, 0.375, 0.40, 0.055], closes[-7:], level)
 
     # footer: score · weekly bet · tagline
-    fig.text(0.06, 0.185, season_line, color=MUTED, fontsize=15, va="center")
+    fig.text(0.06, 0.265, season_line, color=MUTED, fontsize=15, va="center")
     if weekly_line:
-        fig.text(0.06, 0.145, weekly_line, color=MUTED, fontsize=14, va="center")
-    fig.text(0.06, 0.075, "Two minds enter. One verdict.", color=TEXT, fontsize=16,
+        fig.text(0.06, 0.220, weekly_line, color=MUTED, fontsize=14, va="center")
+    fig.text(0.06, 0.115, "Two minds enter. One verdict.", color=TEXT, fontsize=17,
              fontweight="bold", va="center")
 
     fig.savefig(out, facecolor=BG); plt.close(fig); return out
