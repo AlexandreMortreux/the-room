@@ -142,7 +142,7 @@ def _finish(fig, out, hero, chips):
     return out
 
 
-def build_today_card(out, price, preds, level, season, closes=None):
+def build_today_card(out, price, preds, level, season_line, closes=None):
     """Template B — today's bets. No 'Yesterday' line: that lives in Template A."""
     if closes is None:
         closes = load_closes(14)
@@ -160,12 +160,11 @@ def build_today_card(out, price, preds, level, season, closes=None):
           f"{round(preds['oracle']*100)}% · {ow}", light=ol)
     _chip(fig, chips, 0.52, 0.42, GUARDIAN, "GUARDIAN · ▼ BELOW · ",
           f"{round(preds['guardian']*100)}% · {gw}", light=gl)
-    fig.text(0.06, 0.095, f"Season:  Oracle {season[0]}  |  Guardian {season[1]}",
-             color=MUTED, fontsize=15, va="center")
+    fig.text(0.06, 0.095, season_line, color=MUTED, fontsize=15, va="center")
     return _finish(fig, out, hero, chips)
 
 
-def build_resolution_card(out, close_px, level, preds, winner, season, streak,
+def build_resolution_card(out, close_px, level, preds, winner, season_line, streak,
                           period_label, closes=None):
     """Template A — morning resolution. winner: 'oracle' | 'guardian' | None."""
     if closes is None:
@@ -205,7 +204,7 @@ def build_resolution_card(out, close_px, level, preds, winner, season, streak,
             color, name, pct, _ = spec(agent)
             _chip(fig, chips, x, 0.42, color, name, pct, dim=True)
 
-    foot = f"Season:  Oracle {season[0]}  |  Guardian {season[1]}"
+    foot = season_line
     if streak:
         foot += f"       Streak:  {streak}"
     fig.text(0.06, 0.095, foot, color=MUTED, fontsize=15, va="center")

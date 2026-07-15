@@ -305,21 +305,28 @@ def season_score(rows):
     return score
 
 
-def season_pair(rows):
-    """('W-L', 'W-L') for Oracle and Guardian — the cards' footer format."""
+def day_number(now):
+    """Ordinal experiment day (first production post = Day 1)."""
+    return (now.date() - DAY0).days + 1
+
+
+def build_season_line(rows, now, emoji=True):
+    """Unified score line, one source everywhere:
+    'Season · Day N: 🔮 Oracle X : Y Guardian 🛡' (X:Y = each agent's wins).
+    Cards pass emoji=False (matplotlib can't render the agent emojis)."""
     sc = season_score(rows)
-    return (f"{sc['oracle']['wins']}-{sc['oracle']['losses']}",
-            f"{sc['guardian']['wins']}-{sc['guardian']['losses']}")
+    o, g = sc["oracle"]["wins"], sc["guardian"]["wins"]
+    head = f"Season · Day {day_number(now)}: "
+    return head + (f"🔮 Oracle {o} : {g} Guardian 🛡" if emoji
+                   else f"Oracle {o} : {g} Guardian")
 
 
 def build_tweet_draft(rows, predictions, now):
     """Ready-to-post tweet draft: Day N + score line + today's bet + repo link."""
-    day_n = (now.date() - DAY0).days + 1
-    s0, s1 = season_pair(rows)
     level = float({p["agent"]: p for p in predictions}["oracle"]["level"])
     return "\n".join([
-        f"THE ROOM — Day {day_n}",
-        f"Season: Oracle {s0} | Guardian {s1}",
+        f"THE ROOM — Day {day_number(now)}",
+        build_season_line(rows, now, emoji=False),
         f"Today: Oracle above ${level:,.0f} vs Guardian below ${level:,.0f}",
         REPO_URL,
     ])
@@ -360,9 +367,8 @@ def resolve_pending(rows, klines, now):
     return resolved
 
 
-def build_resolution_post(resolved, rows):
+def build_resolution_post(resolved, rows, now):
     close = float(resolved[0]["price_at_expiry"])
-    score = season_score(rows)
     winners = [r["agent"] for r in resolved if r["result"] == "win"]
     if winners:
         names = {"oracle": "🔮 Oracle", "guardian": "🛡 Guardian"}
@@ -379,12 +385,11 @@ def build_resolution_post(resolved, rows):
             f"{emoji} {r['agent'].capitalize()}: {arrow} ${float(r['level']):,.0f} "
             f"({int(round(float(r['confidence']) * 100))}%) — {mark} {r['result']}"
         )
-    o, g = score["oracle"], score["guardian"]
     lines += [
         "",
         point_line,
         "",
-        f"Season: 🔮 {o['wins']}W-{o['losses']}L | 🛡 {g['wins']}W-{g['losses']}L",
+        build_season_line(rows, now),
     ]
     return "\n".join(lines)
 
@@ -783,12 +788,10 @@ def build_scorecard_stats(rows, now):
         }
 
     score = season_score(rows)
-    stats = {"season": {}, "week": {}}
+    stats = {"season_line": build_season_line(rows, now), "season": {}, "week": {}}
     for agent in ("oracle", "guardian"):
         s = score[agent]
         stats["season"][agent] = {
-            "wins": s["wins"],
-            "losses": s["losses"],
             "accuracy_pct": round(100 * s["wins"] / s["resolved"], 1) if s["resolved"] else None,
             "mean_brier": round(s["brier_sum"] / s["resolved"], 3) if s["resolved"] else None,
             "streak": streak(agent),
@@ -811,9 +814,10 @@ def post_scorecard(client, rows, now):
     system = (
         "You are the editor of THE ROOM, a daily BTC digest. From the data below, "
         "write the Sunday scorecard post in English: title '🏆 Weekly Scorecard', "
-        "season W/L for both agents (🔮 Oracle and 🛡 Guardian), accuracy %, mean "
-        "Brier (use the mean_brier value as-is, format 0.XXX), current streak, and the "
-        "week's best and worst call with facts. Include one short line explaining Brier: "
+        "then the score line EXACTLY as given in season_line (do NOT use any W-L "
+        "notation), accuracy %, mean Brier (use the mean_brier value as-is, format "
+        "0.XXX), current streak, and the week's best and worst call with facts. "
+        "Include one short line explaining Brier: "
         "'mean Brier, lower = better calibrated'. Dry, lightly ironic, "
         "≤20 seconds to read. Telegram HTML (<b>, <i>), no markdown. English only, no "
         "language mixing. Output the post text only, no preamble."
@@ -868,14 +872,9 @@ def streak_leader(rows):
     return f"{name} {best[1]}"
 
 
-def build_footer(rows):
+def build_footer(rows, now):
     """Post footer, assembled by code: score line from the ledger + sources note."""
-    score = season_score(rows)
-    o, g = score["oracle"], score["guardian"]
-    season = (
-        f"Season: 🔮 Oracle {o['wins']}-{o['losses']} | "
-        f"🛡 Guardian {g['wins']}-{g['losses']}"
-    )
+    season = build_season_line(rows, now)
     leader = streak_leader(rows)
     if leader:
         season += f" · Streak: {leader}"
@@ -932,7 +931,7 @@ def run_step(name, fn):
 def post_resolution(resolved, rows, now):
     """Template A resolution card with the full text as caption (one message);
     if the card fails, still post the text so the resolution is never lost."""
-    resolution_text = build_resolution_post(resolved, rows)
+    resolution_text = build_resolution_post(resolved, rows, now)
     try:
         import card as card_mod
         wrow = next((r for r in resolved if r["result"] == "win"), None)
@@ -945,7 +944,7 @@ def post_resolution(resolved, rows, now):
         card_mod.build_resolution_card(
             path, close_px=close_px, level=float(resolved[0]["level"]),
             preds={r["agent"]: float(r["confidence"]) for r in resolved}, winner=winner,
-            season=season_pair(rows),
+            season_line=build_season_line(rows, now, emoji=False),
             streak=leader.replace("🔮 ", "").replace("🛡 ", "") if leader else None,
             period_label=f"Resolution · {now - timedelta(hours=24):%b %d} daily close",
         )
@@ -1031,7 +1030,8 @@ def main():
             confs = {p["agent"]: float(p["confidence"]) for p in debate["predictions"]}
             level = float(debate["predictions"][0]["level"])
             path = os.path.join(tempfile.gettempdir(), f"theroom_{now:%Y-%m-%d}_bet_{level:.0f}.png")
-            card_mod.build_today_card(path, current_price, confs, level, season_pair(rows))
+            card_mod.build_today_card(path, current_price, confs, level,
+                                      build_season_line(rows, now, emoji=False))
             tg_send_photo(path)
             card["path"] = path
         run_step("today_card", _today_card)
@@ -1039,7 +1039,7 @@ def main():
         def _signal_post():
             tg_send_message("\n\n".join([
                 build_header(signal, now), debate["post_html"].strip(),
-                build_footer(rows), CTA]) + "\n\n" + DISCLAIMER)
+                build_footer(rows, now), CTA]) + "\n\n" + DISCLAIMER)
         signal_ok = run_step("signal_post", _signal_post)
 
         # Hard dependency: no poll without the signal post.
