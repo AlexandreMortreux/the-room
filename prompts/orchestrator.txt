@@ -30,6 +30,9 @@ Structure:
    role, direction, percent and bucket word:
    "🔮 Oracle (contrarian) — Above $<level> · <NN>% · <bucket>"
    "🛡 Guardian (skeptic) — Below $<level> · <NN>% · <bucket>"
+   Here $<level> is the SAME watershed level that appears in the predictions JSON,
+   the Predictions block and the card — one shared value. It is NEVER the current
+   price. Copy the exact prediction level into both stance lines.
    then, on the next line, the argument — which starts IMMEDIATELY with reasoning.
    Do NOT restate the call (direction/level/percent) in the argument's opening
    words; the stance line already carries it. HARD LIMIT: max 2 sentences and

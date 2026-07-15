@@ -545,6 +545,10 @@ def classify_news(client, news):
 
 
 DOLLAR_RE = re.compile(r"\$([\d,]+(?:\.\d+)?)")
+# Stance-line level: "… — Above $63,500 · 65% …" / "… — Below $63,500 · 62% …"
+# (capital Above/Below + a middle-dot after the amount) — distinct from the
+# prediction block's "closes above $X — NN%".
+STANCE_RE = re.compile(r"(?:Above|Below)\s+\$([\d,]+(?:\.\d+)?)\s*·")
 
 
 def make_debate_validator(current_price, allowed_dollars):
@@ -579,6 +583,16 @@ def make_debate_validator(current_price, allowed_dollars):
                     f"level {level} must be a structural watershed distinct from the "
                     f"current price {current_price:.0f} (use yesterday's high/low, a "
                     f"range boundary or a round number), not the current price"
+                )
+        # Stance lines share ONE source of truth with the card and the predictions
+        # block: they must render the prediction level, never the current price.
+        lvl = float(preds[0]["level"])
+        for raw in STANCE_RE.findall(data["post_html"]):
+            if abs(float(raw.replace(",", "")) - lvl) > 2.0:
+                raise ValueError(
+                    f"stance line shows ${float(raw.replace(',', '')):,.0f} but the "
+                    f"prediction level is ${lvl:,.0f}; the stance MUST use the exact "
+                    f"level (same as the card and Predictions), never the current price"
                 )
         # Every $-amount must be a known number (data payload, a ledger level/close,
         # or the watershed) — past calls must be quoted verbatim, not from memory.
