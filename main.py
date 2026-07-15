@@ -295,7 +295,10 @@ def season_score(rows):
         "guardian": {"wins": 0, "losses": 0, "brier_sum": 0.0, "resolved": 0},
     }
     for r in rows:
+        # daily game only — weekly (168h) bets are scored in the ledger separately
         if r["agent"] not in score or r["result"] not in ("win", "loss"):
+            continue
+        if r.get("horizon_h") != "24":
             continue
         s = score[r["agent"]]
         s["wins" if r["result"] == "win" else "losses"] += 1
@@ -319,6 +322,30 @@ def build_season_line(rows, now, emoji=True):
     head = f"Season · Day {day_number(now)}: "
     return head + (f"🔮 Oracle {o} : {g} Guardian 🛡" if emoji
                    else f"Oracle {o} : {g} Guardian")
+
+
+def build_tldr(predictions, rows, now):
+    """Bold one-liner right after the header — the whole day in 3 seconds."""
+    level = float({p["agent"]: p for p in predictions}["oracle"]["level"])
+    sc = season_score(rows)
+    o, g = sc["oracle"]["wins"], sc["guardian"]["wins"]
+    return (f"⚔️ <b>TODAY: Oracle says UP — above ${level:,.0f}. "
+            f"Guardian says DOWN. Score {o}:{g}. Vote below ⬇</b>")
+
+
+def build_weekly_line(rows, current_price):
+    """Footer line for the active weekly bet (horizon 168h), or None."""
+    weekly = [r for r in rows if r.get("horizon_h") == "168" and r["result"] == "pending"]
+    if not weekly:
+        return None
+    latest = max(r["created_utc"] for r in weekly)
+    o = next((r for r in weekly if r["agent"] == "oracle" and r["created_utc"] == latest), None)
+    if not o:
+        return None
+    level = float(o["level"])
+    away = abs(level - current_price)
+    return (f"📅 Weekly bet: Oracle {o['direction']} ${level:,.0f} · price now "
+            f"${current_price:,.0f} (${away:,.0f} away) · resolves Sunday")
 
 
 def build_tweet_draft(rows, predictions, now):
@@ -385,12 +412,14 @@ def build_resolution_post(resolved, rows, now):
             f"{emoji} {r['agent'].capitalize()}: {arrow} ${float(r['level']):,.0f} "
             f"({int(round(float(r['confidence']) * 100))}%) — {mark} {r['result']}"
         )
-    lines += [
-        "",
-        point_line,
-        "",
-        build_season_line(rows, now),
-    ]
+    verdict = []
+    losers = [r for r in resolved if r["result"] == "loss"]
+    if losers:
+        lo = losers[0]
+        name = "🔮 Oracle" if lo["agent"] == "oracle" else "🛡 Guardian"
+        plain = "close higher" if lo["direction"] == "above" else "close lower"
+        verdict = [f"<i>{name} expected BTC to {plain} — the market did the opposite.</i>", ""]
+    lines += ["", point_line, "", *verdict, build_season_line(rows, now)]
     return "\n".join(lines)
 
 
@@ -613,6 +642,42 @@ def make_debate_validator(current_price, allowed_dollars):
     return validate
 
 
+def make_weekly_validator(current_price):
+    def validate(data):
+        preds = data["predictions"]
+        if not isinstance(preds, list) or len(preds) != 2:
+            raise ValueError("'predictions' must contain exactly 2 items")
+        if {p.get("agent") for p in preds} != {"oracle", "guardian"}:
+            raise ValueError("agents must be oracle and guardian")
+        if {p.get("direction") for p in preds} != {"above", "below"}:
+            raise ValueError("directions must be one above, one below")
+        if len({round(float(p["level"]), 2) for p in preds}) != 1:
+            raise ValueError("both predictions must share one level")
+        for p in preds:
+            if int(p["horizon_h"]) != 168:
+                raise ValueError("horizon_h must be 168")
+            c = float(p["confidence"])
+            if not 0.55 <= c <= 0.80:
+                raise ValueError(f"confidence {c} outside [0.55, 0.80]")
+            lvl = float(p["level"])
+            if abs(lvl - current_price) > 0.15 * current_price:
+                raise ValueError(f"level {lvl} outside ±15% of current price")
+            if abs(lvl - current_price) < 0.001 * current_price:
+                raise ValueError("level must be a watershed distinct from the current price")
+    return validate
+
+
+def generate_weekly(client, data_payload, current_price):
+    """Two mutually exclusive weekly (168h) predictions at one watershed level."""
+    user = read_prompt("weekly.txt") + "\n\nInput data:\n" + json.dumps(
+        {"data_payload": data_payload, "current_price": current_price},
+        ensure_ascii=False, indent=1)
+    data = call_claude_json(
+        client, MODEL_DEBATE, "You output strict JSON only, no preamble.", user,
+        max_tokens=400, validate=make_weekly_validator(current_price), max_attempts=3)
+    return data["predictions"]
+
+
 def run_debate(client, signal, data_payload, track_records, current_price,
                past_calls, allowed_dollars):
     system = read_prompt("oracle.txt") + "\n\n" + read_prompt("guardian.txt")
@@ -754,7 +819,7 @@ def is_sunday_utc8(now):
 
 
 def build_scorecard_stats(rows, now):
-    resolved = [r for r in rows if r["result"] in ("win", "loss")]
+    resolved = [r for r in rows if r["result"] in ("win", "loss") and r.get("horizon_h") == "24"]
     if not resolved:
         return None
     week = [
@@ -845,7 +910,8 @@ def build_header(signal, now):
 def current_streak(rows, agent):
     """(result, length) of the agent's current streak by latest resolutions, or None."""
     history = sorted(
-        (r for r in rows if r["agent"] == agent and r["result"] in ("win", "loss")),
+        (r for r in rows if r["agent"] == agent and r["result"] in ("win", "loss")
+         and r.get("horizon_h") == "24"),
         key=lambda r: r["resolved_utc"] or r["created_utc"],
     )
     if not history:
@@ -872,28 +938,34 @@ def streak_leader(rows):
     return f"{name} {best[1]}"
 
 
-def build_footer(rows, now):
-    """Post footer, assembled by code: score line from the ledger + sources note."""
+def build_footer(rows, now, current_price):
+    """Post footer, assembled by code: score line + weekly bet + sources note."""
     season = build_season_line(rows, now)
     leader = streak_leader(rows)
     if leader:
         season += f" · Streak: {leader}"
     data_note = ("Data: Binance funding/OI · Fear&amp;Greed · price feed · "
                  "News: public feeds")
-    return f"<i>{season}</i>\n<i>{data_note}</i>"
+    parts = [f"<i>{season}</i>"]
+    weekly = build_weekly_line(rows, current_price)
+    if weekly:
+        parts.append(f"<i>{weekly}</i>")
+    parts.append(f"<i>{data_note}</i>")
+    return "\n".join(parts)
 
 
-def append_predictions(rows, predictions, current_price, now):
-    expires = now + timedelta(hours=24)
+def append_predictions(rows, predictions, current_price, now, horizon_h=24, id_tag=""):
+    expires = now + timedelta(hours=horizon_h)
+    tag = f"{id_tag}-" if id_tag else ""
     for p in predictions:
         rows.append({
-            "id": f"{now:%Y%m%d-%H%M}-{p['agent']}",
+            "id": f"{now:%Y%m%d-%H%M}-{tag}{p['agent']}",
             "created_utc": iso(now),
             "agent": p["agent"],
             "asset": "BTC",
             "direction": p["direction"],
             "level": f"{float(p['level']):.2f}",
-            "horizon_h": "24",
+            "horizon_h": str(horizon_h),
             "confidence": f"{float(p['confidence']):.2f}",
             "price_source": PRICE_SOURCE,
             "price_at_call": f"{current_price:.2f}",
@@ -979,10 +1051,13 @@ def main():
     current_price = fetch_current_price(klines)
     resolved = resolve_pending(rows, klines, now)
     if resolved:
-        save_ledger(rows)
+        save_ledger(rows)  # persist all resolutions (daily + weekly) to the ledger
         log(f"resolved {len(resolved)} prediction(s)")
-        # 2. Resolution — isolated step (Template A card + caption).
-        run_step("resolution", lambda: post_resolution(resolved, rows, now))
+        # 2. Resolution card is the daily game only (weekly bets are scored in
+        #    the ledger but not given their own resolution card).
+        daily_resolved = [r for r in resolved if r["horizon_h"] == "24"]
+        if daily_resolved:
+            run_step("resolution", lambda: post_resolution(daily_resolved, rows, now))
 
     # Idempotency: a scheduled production run does not post/write twice if a
     # prediction with today's UTC date already exists. DRY_RUN, STAGE and an
@@ -1020,6 +1095,19 @@ def main():
         alert_owner(f"⚠️ THE ROOM: step debate failed — {e}")
         debate = None
 
+    # 7b. Weekly watershed — on Sundays, one weekly (168h) call per agent, added
+    #     to the ledger before the post so its footer line shows it. Once/Sunday.
+    #     STAGE_WEEKLY_TEST=1 forces it in staging any day, for testing.
+    weekly_due = is_sunday_utc8(now) or (STAGE and os.environ.get("STAGE_WEEKLY_TEST") == "1")
+    if weekly_due and not any(
+            r.get("horizon_h") == "168" and r["created_utc"][:10] == today for r in rows):
+        def _weekly():
+            wk = generate_weekly(client, data_payload, current_price)
+            append_predictions(rows, wk, current_price, now, horizon_h=168, id_tag="weekly")
+            save_ledger(rows)
+            log("weekly bet appended to ledger")
+        run_step("weekly_bet", _weekly)
+
     # 8. Publish — each step isolated (traceback + owner alert on failure, then
     #    continue). Order: Today card -> Signal post -> Poll -> draft tweet.
     if debate:
@@ -1038,8 +1126,10 @@ def main():
 
         def _signal_post():
             tg_send_message("\n\n".join([
-                build_header(signal, now), debate["post_html"].strip(),
-                build_footer(rows, now), CTA]) + "\n\n" + DISCLAIMER)
+                build_header(signal, now),
+                build_tldr(debate["predictions"], rows, now),
+                debate["post_html"].strip(),
+                build_footer(rows, now, current_price), CTA]) + "\n\n" + DISCLAIMER)
         signal_ok = run_step("signal_post", _signal_post)
 
         # Hard dependency: no poll without the signal post.

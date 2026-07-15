@@ -1,0 +1,12 @@
+Pick ONE weekly call for THE ROOM: where BTC closes about 7 days from now
+(168-hour horizon). Give two mutually exclusive predictions at a single weekly
+watershed level — Oracle above, Guardian below — the level that best splits the
+two methodologies (Oracle: liquidity regimes / contrarian; Guardian: flow
+inertia / base rates).
+Rules: the level comes ONLY from the data (a weekly high/low, a range boundary
+or a round number), is within ±15% of the current price, and is NEVER the current
+price itself. Confidence is a single honest number 0.55-0.80 for each agent.
+Output — strict JSON, no preamble, no markdown:
+{"predictions":[
+{"agent":"oracle","asset":"BTC","direction":"above","level":N,"horizon_h":168,"confidence":0.NN},
+{"agent":"guardian","asset":"BTC","direction":"below","level":N,"horizon_h":168,"confidence":0.NN}]}

@@ -10,6 +10,13 @@ lazily cluster both values in the narrow 60-65 band; use the whole 55-80 range
 when the data warrants it. Honest 55/55 on a murky day is fine.
 LANGUAGE: English only, no mixing. Forbidden deal words anywhere: long, short,
 buy, sell, position, size. Only forecast language: above/below, closes, holds, level.
+PLAIN LANGUAGE (P0): write for a smart reader who does NOT trade. Every debate
+line starts with a plain thesis (one jargon-free sentence), then at most two
+numbers, each translated inline into what it MEANS. Never leave funding, open
+interest or a historical frequency as bare jargon — translate them (funding =
+"cost of leveraged bets", open interest = "open bets in the market", etc.). Never
+use hard trader slang (FVG, liquidity grab, order block). The whole post must
+read in ≤30 seconds and every line pass a 10-second non-trader test.
 PAST CALLS: when an agent references a previous prediction, weave the matching
 past_calls entry naturally into the sentence — e.g. "my ledger shows I called..."
 or "on 2026-07-12 Oracle called $64,000 and closed below" — copying the date and
