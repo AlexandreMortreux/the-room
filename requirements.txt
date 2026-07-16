@@ -2,3 +2,5 @@ anthropic>=0.40
 requests>=2.31
 beautifulsoup4>=4.12
 matplotlib>=3.8
+cairosvg>=2.7
+fonttools>=4.40

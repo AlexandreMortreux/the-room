@@ -321,6 +321,22 @@ def case_number(rows, created_utc=None):
     return len(dates) + 1
 
 
+def bucket_word(conf):
+    """Confidence bucket word (matches the orchestrator's 55-60/61-70/71-80)."""
+    p = float(conf) * 100
+    return "lean" if p <= 60 else "confident" if p <= 70 else "conviction"
+
+
+def last_daily_winner(rows):
+    """Agent who won the most recently resolved daily pair, or None."""
+    res = [r for r in rows if r["result"] in ("win", "loss")
+           and r.get("horizon_h") == "24" and r["resolved_utc"]]
+    if not res:
+        return None
+    latest = max(r["resolved_utc"] for r in res)
+    return next((r["agent"] for r in res if r["resolved_utc"] == latest and r["result"] == "win"), None)
+
+
 def build_season_line(rows, now, emoji=True):
     """Unified score line, one source everywhere:
     'Season · Day N: 🔮 Oracle X : Y Guardian 🛡' (X:Y = each agent's wins).
@@ -1132,17 +1148,26 @@ def main():
         card = {"path": None}
 
         def _today_card():
-            import card as card_mod
-            level = float(debate["predictions"][0]["level"])
+            import svg_card
+            preds = {p["agent"]: p for p in debate["predictions"]}
+            o, g = preds["oracle"], preds["guardian"]
+            level = float(o["level"])
             case_no = case_number(rows)
             sc = season_score(rows)
-            footer_right = (f"Day {day_number(now)} — "
-                            f"Oracle {sc['oracle']['wins']} : {sc['guardian']['wins']} Guardian")
+            dc = data_payload.get("day_change_pct")
             path = os.path.join(tempfile.gettempdir(),
                                 f"theroom_{now:%Y-%m-%d}_case{case_no}_bet.png")
-            card_mod.build_today_card(
-                path, current_price, debate["predictions"], level, case_no,
-                footer_left=f"{now:%b} {now.day}", footer_right=footer_right)
+            svg_card.build_card_v2(
+                path, case_no=case_no, date_label=f"{now:%b} {now.day}",
+                day_n=day_number(now), oracle_wins=sc["oracle"]["wins"],
+                guardian_wins=sc["guardian"]["wins"], last_winner=last_daily_winner(rows),
+                level=level, btc_price=current_price,
+                btc_change=float(dc) if isinstance(dc, (int, float)) else 0.0,
+                resolve_label="Resolves 00:00 UTC",
+                bull_conf=float(o["confidence"]), bull_bucket=bucket_word(o["confidence"]),
+                bull_reason=str(o.get("driver", "")).strip(),
+                bear_conf=float(g["confidence"]), bear_bucket=bucket_word(g["confidence"]),
+                bear_reason=str(g.get("driver", "")).strip())
             tg_send_photo(path)
             card["path"] = path
         run_step("today_card", _today_card)
