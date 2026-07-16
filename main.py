@@ -51,7 +51,7 @@ REPO_URL = os.environ.get("REPO_URL", "https://github.com/AlexandreMortreux/the-
 # direct link to the ledger file (overridable via LEDGER_URL)
 LEDGER_URL = os.environ.get("LEDGER_URL", f"{REPO_URL}/blob/main/ledger.csv")
 CTA = "⚔️ Pick your side — poll below ⬇"
-DAY0 = date(2026, 7, 9)  # first public English post; that day is Day 1
+DAY0 = date(2026, 7, 6)  # first prediction pair; that day is Day 1
 DISCLAIMER = (
     "<i>Not financial advice. Predictions are an experiment — "
     f'<a href="{LEDGER_URL}">open ledger</a>.</i>'
@@ -1135,13 +1135,14 @@ def main():
             import card as card_mod
             level = float(debate["predictions"][0]["level"])
             case_no = case_number(rows)
-            wk = build_weekly_line(rows, current_price)
+            sc = season_score(rows)
+            footer_right = (f"Day {day_number(now)} — "
+                            f"Oracle {sc['oracle']['wins']} : {sc['guardian']['wins']} Guardian")
             path = os.path.join(tempfile.gettempdir(),
                                 f"theroom_{now:%Y-%m-%d}_case{case_no}_bet.png")
             card_mod.build_today_card(
                 path, current_price, debate["predictions"], level, case_no,
-                build_season_line(rows, now, emoji=False),
-                wk.replace("📅 ", "") if wk else None)
+                footer_left=f"{now:%b} {now.day}", footer_right=footer_right)
             tg_send_photo(path)
             card["path"] = path
         run_step("today_card", _today_card)

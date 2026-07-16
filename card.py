@@ -87,66 +87,67 @@ def _sparkline(fig, rect, closes, level):
 
 
 CTX_BG = "#17171A"  # a hair lighter than the background
+# panel lightness by confidence bucket, tuned for text contrast (hue unchanged)
+_VIOLET_L = {"lean": 0.45, "confident": 0.38, "conviction": 0.31}   # light text
+_AMBER_L  = {"lean": 0.72, "confident": 0.65, "conviction": 0.58}   # dark text
 
 
-def build_today_card(out, price, predictions, level, case_no, season_line,
-                     weekly_line=None, closes=None):
-    """Template B — two direction-coloured bet panels (green UP / red DOWN);
-    the shared level is the hero, a full-width context block holds price+trend."""
+def build_today_card(out, price, predictions, level, case_no, footer_left,
+                     footer_right, closes=None):
+    """Template B — owner's sandwich: Oracle panel on top, the level + price in
+    the middle, Guardian panel on the bottom."""
     if closes is None:
         closes = load_closes(14)
     day_chg = (closes[-1] / closes[-2] - 1) * 100
     by = {p["agent"]: p for p in predictions}
     fig = plt.figure(figsize=(10.8, 10.8), dpi=100, facecolor=BG)
 
-    # header: brand + case on the left, date on the right
-    fig.text(0.05, 0.955, " ".join("THE ROOM") + f"   ·   CASE No. {case_no}",
-             color=MUTED, fontsize=15, va="center")
-    fig.text(0.95, 0.955, datetime.now(timezone.utc).strftime("%d %b %Y").upper(),
-             color=MUTED, fontsize=15, ha="right", va="center")
+    # 1. header: brand left, case right
+    fig.text(0.05, 0.955, "The ROOM", color=TEXT, fontsize=20, fontweight="bold", va="center")
+    fig.text(0.95, 0.955, f"Case no.{case_no}", color=MUTED, fontsize=17, ha="right", va="center")
 
-    # two panels: green = UP/above (Oracle), red = DOWN/below (Guardian)
-    PY, PH = 0.575, 0.34
-    def panel(px, agent, color, updown, arrow, relation):
-        fig.patches.append(FancyBboxPatch(
-            (px, PY), 0.43, PH, boxstyle="round,pad=0,rounding_size=0.015",
-            transform=fig.transFigure, facecolor=_at_light(color, 0.16),
-            edgecolor="none", zorder=1))
-        cx = px + 0.215
-        T = PY + PH
-        fig.text(cx, T - 0.045, f"{agent.upper()}   {arrow} {updown}", color=color,
-                 fontsize=23, fontweight="bold", ha="center", va="center", zorder=3)
-        fig.text(cx, T - 0.090, relation, color=MUTED, fontsize=15, ha="center",
-                 va="center", zorder=3)
-        big = fig.text(cx, T - 0.160, f"${level:,.0f}", color=TEXT, fontsize=54,
-                       fontweight="bold", ha="center", va="center", zorder=3, fontfamily=NUM)
-        _fit(fig, big, 0.40)
+    # panels (2 & 4): Oracle violet on top, Guardian amber on the bottom
+    def panel(py, agent, hue, arrow, arrow_c, relation, light_text):
         p = by[agent]
-        fig.text(cx, T - 0.230, f"{round(p['confidence']*100)}% · {conf_bucket(p['confidence'])}",
-                 color=TEXT, fontsize=21, fontweight="bold", ha="center", va="center", zorder=3)
-        drv = str(p.get("driver", "")).strip()
-        if drv:
-            for i, ln in enumerate(textwrap.wrap(drv, width=30)[:2]):
-                fig.text(cx, T - 0.278 - i * 0.033, ln, color=MUTED, fontsize=14,
-                         ha="center", va="center", zorder=3)
-    panel(0.05, "oracle", WIN, "UP", "▲", "ABOVE")
-    panel(0.52, "guardian", LOSS, "DOWN", "▼", "BELOW")
+        bucket = conf_bucket(p["confidence"])
+        L = (_VIOLET_L if light_text else _AMBER_L)[bucket]
+        main = TEXT if light_text else "#141210"
+        sec = "#D8D6D1" if light_text else "#3B3520"
+        fig.patches.append(FancyBboxPatch(
+            (0.05, py), 0.90, 0.225, boxstyle="round,pad=0,rounding_size=0.022",
+            transform=fig.transFigure, facecolor=_at_light(hue, L), edgecolor="none", zorder=1))
+        T = py + 0.225
+        fig.text(0.085, T - 0.055, arrow, color=arrow_c, fontsize=30, ha="center",
+                 va="center", zorder=3)
+        fig.text(0.135, T - 0.055, agent.capitalize(), color=main, fontsize=42,
+                 fontweight="bold", ha="left", va="center", zorder=3)
+        fig.text(0.09, T - 0.16, f"{relation} · {round(p['confidence']*100)}% {bucket}",
+                 color=sec, fontsize=21, ha="left", va="center", zorder=3)
+        fig.text(0.56, T - 0.05, "Why:", color=sec, fontsize=17, ha="left", va="center", zorder=3)
+        drv = str(p.get("driver", "")).strip()[:90]
+        for i, ln in enumerate(textwrap.wrap(drv, width=38)[:2]):
+            fig.text(0.56, T - 0.10 - i * 0.038, ln, color=main, fontsize=17,
+                     ha="left", va="center", zorder=3)
+    panel(0.66, "oracle", ORACLE, "▲", WIN, "ABOVE", light_text=True)
+    panel(0.135, "guardian", GUARDIAN, "▼", LOSS, "BELOW", light_text=False)
 
-    # full-width context block (slightly lighter than bg): price + 7-day sparkline
-    # zorder 0 keeps it behind the sparkline axes (which draws above fig patches).
+    # 3. centre: level hero on the left, price chip on the right
+    fig.text(0.06, 0.612, "THE LINE · daily close", color=MUTED, fontsize=15, va="center")
+    hero = fig.text(0.06, 0.51, f"${level:,.0f}", color=TEXT, fontsize=94,
+                    fontweight="bold", va="center", fontfamily=NUM)
+    _fit(fig, hero, 0.48)
     fig.patches.append(FancyBboxPatch(
-        (0.05, 0.355), 0.90, 0.165, boxstyle="round,pad=0,rounding_size=0.015",
-        transform=fig.transFigure, facecolor=CTX_BG, edgecolor="none", zorder=0))
-    fig.text(0.5, 0.492, f"BTC now ${price:,.0f}   ·   {day_chg:+.2f}% today",
-             color=TEXT, fontsize=17, ha="center", va="center", zorder=3)
-    _sparkline(fig, [0.30, 0.375, 0.40, 0.055], closes[-7:], level)
+        (0.60, 0.425), 0.35, 0.185, boxstyle="round,pad=0,rounding_size=0.02",
+        transform=fig.transFigure, facecolor=CTX_BG, edgecolor="none", zorder=1))
+    fig.text(0.775, 0.585, "BTC now", color=MUTED, fontsize=16, ha="center", va="center", zorder=3)
+    fig.text(0.775, 0.535, f"Today: {day_chg:+.2f}%", color=(WIN if day_chg >= 0 else LOSS),
+             fontsize=18, fontweight="bold", ha="center", va="center", zorder=3)
+    fig.text(0.775, 0.475, f"${price:,.0f}", color=TEXT, fontsize=32, fontweight="bold",
+             ha="center", va="center", zorder=3, fontfamily=NUM)
 
-    # footer: score · weekly bet · tagline
-    fig.text(0.06, 0.265, season_line, color=MUTED, fontsize=15, va="center")
-    if weekly_line:
-        fig.text(0.06, 0.220, weekly_line, color=MUTED, fontsize=14, va="center")
-    fig.text(0.06, 0.115, "Two minds enter. One verdict.", color=TEXT, fontsize=17,
-             fontweight="bold", va="center")
+    # 5. footer: date left, day + score right
+    fig.text(0.05, 0.065, footer_left, color=MUTED, fontsize=15, va="center")
+    fig.text(0.95, 0.065, footer_right, color=MUTED, fontsize=15, ha="right", va="center")
 
     fig.savefig(out, facecolor=BG); plt.close(fig); return out
 
