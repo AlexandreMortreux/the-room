@@ -35,8 +35,9 @@ def fmt_bet(direction, level):
     return f"{str(direction).upper()} {money(level)}"
 
 
-def fmt_conviction(conf, bucket):
-    return f"{round(float(conf) * 100)}% {bucket}"
+def fmt_conviction(conf):
+    """Always the word 'conviction'; only the number varies (both agents)."""
+    return f"{round(float(conf) * 100)}% conviction"
 
 
 def fmt_change(pct):
@@ -149,6 +150,15 @@ def wrap_reason(text, max_px=REASON_MAX_PX, size=REASON_SIZE, max_lines=REASON_L
         cur = w if text_width_px(w, size) <= max_px else _ellipsize(w, max_px, size)
     if cur:
         lines.append(cur)
+    # orphan control: if the last line is a tiny stub (e.g. "cost"), pull the
+    # last word of the previous line down so it doesn't dangle
+    if len(lines) >= 2 and len(lines[-1]) < 8:
+        prev = lines[-2].split()
+        if len(prev) > 1:
+            cand = f"{prev[-1]} {lines[-1]}"
+            if text_width_px(cand, size) <= max_px:
+                lines[-2] = " ".join(prev[:-1])
+                lines[-1] = cand
     return (lines + [""] * max_lines)[:max_lines]
 
 
@@ -163,8 +173,7 @@ def validate(bull_reason, bear_reason):
 
 def build_card_v2(out, *, case_no, date_label, day_n, oracle_wins, guardian_wins,
                   last_winner, level, btc_price, btc_change, resolve_label,
-                  bull_conf, bull_bucket, bull_reason,
-                  bear_conf, bear_bucket, bear_reason):
+                  bull_conf, bull_reason, bear_conf, bear_reason):
     """Render the v2 bet card. Each side's reason is one plain sentence; it is
     word-wrapped to the 3 reason rows and ellipsised if it overflows."""
     validate(bull_reason, bear_reason)
@@ -182,9 +191,9 @@ def build_card_v2(out, *, case_no, date_label, day_n, oracle_wins, guardian_wins
     _set_text(root, "t:day_score", fmt_day_score(day_n, oracle_wins, guardian_wins))
     _set_text(root, "t:last_result", fmt_last_result(last_winner))
 
-    _set_text(root, "t:bull_conviction", fmt_conviction(bull_conf, bull_bucket))
+    _set_text(root, "t:bull_conviction", fmt_conviction(bull_conf))
     _set_text(root, "t:bull_bet", fmt_bet("above", level))
-    _set_text(root, "t:bear_conviction", fmt_conviction(bear_conf, bear_bucket))
+    _set_text(root, "t:bear_conviction", fmt_conviction(bear_conf))
     _set_text(root, "t:bear_bet", fmt_bet("below", level))
     for i in range(3):
         _set_text(root, f"t:bull_reason_{i+1}", bull_lines[i])

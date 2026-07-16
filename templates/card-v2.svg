@@ -9,7 +9,7 @@
 <g id="agent-bull">
 <path id="bg" d="M66 183.639C66 170.031 76.7452 159 90 159H990C1003.25 159 1014 170.031 1014 183.639V404.361C1014 417.969 1003.25 429 990 429H90C76.7452 429 66 417.969 66 404.361V183.639Z" fill="#288A4C"/>
 <text id="name" fill="white" style="white-space: pre" xml:space="preserve" font-family="Inter Tight" font-size="48" font-weight="600" letter-spacing="0em"><tspan x="222" y="225.461">Oracle</tspan></text>
-<text id="reasons-label" fill="white" style="white-space: pre" xml:space="preserve" font-family="Inter Tight" font-size="24" font-weight="600" letter-spacing="0em"><tspan x="553" y="225.23">Reason:</tspan></text>
+<text id="reasons-label" fill="white" style="white-space: pre" xml:space="preserve" font-family="Inter Tight" font-size="24" font-weight="600" letter-spacing="0em"><tspan x="553" y="272.23">Reason:</tspan></text>
 <path id="arrow-up" d="M117 230L99.6795 260H134.321L117 230ZM117 257H114V428H117H120V257H117Z" fill="#41E47D"/>
 <path id="bg_2" opacity="0.2" d="M168 397.977L168 400L66 400L66 397.977L168 397.977ZM168 371.677L168 373.699L66 373.699L66 371.677L168 371.677ZM168 345.377L168 347.399L66 347.399L66 345.377L168 345.377ZM168 319.076L168 321.1L66 321.1L66 319.076L168 319.076ZM168 292.776L168 294.8L66 294.8L66 292.776L168 292.776ZM168 266.477L168 268.5L66 268.5L66 266.477L168 266.477ZM168 240.177L168 242.199L66 242.199L66 240.177L168 240.177ZM168 213.877L168 215.899L66 215.899L66 213.877L168 213.877ZM168 187.576L168 189.6L66 189.6L66 187.576L168 187.576Z" fill="#41E47D"/>
 <text id="t:bull_conviction" fill="white" style="white-space: pre" xml:space="preserve" font-family="Inter Tight" font-size="24" font-weight="600" letter-spacing="0em"><tspan x="222" y="354.23">72% conviction</tspan></text>
@@ -28,7 +28,7 @@
 </g>
 <g id="agent-bear">
 <rect id="bg_3" x="66" y="674" width="948" height="270" rx="24" fill="#9A3637"/>
-<text id="reasons-label_2" fill="white" style="white-space: pre" xml:space="preserve" font-family="Inter Tight" font-size="24" font-weight="600" letter-spacing="0em"><tspan x="553" y="744.23">Reason:</tspan></text>
+<text id="reasons-label_2" fill="white" style="white-space: pre" xml:space="preserve" font-family="Inter Tight" font-size="24" font-weight="600" letter-spacing="0em"><tspan x="553" y="791.23">Reason:</tspan></text>
 <text id="name_2" fill="white" style="white-space: pre" xml:space="preserve" font-family="Inter Tight" font-size="48" font-weight="600" letter-spacing="0em"><tspan x="222" y="744.461">Guardian</tspan></text>
 <path id="bg_2_2" opacity="0.2" d="M168 913.4L168 915.424L66 915.424L66 913.4L168 913.4ZM168 887.101L168 889.123L66 889.123L66 887.101L168 887.101ZM168 860.801L168 862.823L66 862.823L66 860.801L168 860.801ZM168 834.5L168 836.523L66 836.523L66 834.5L168 834.5ZM168 808.2L168 810.224L66 810.224L66 808.2L168 808.2ZM168 781.9L168 783.924L66 783.924L66 781.9L168 781.9ZM168 755.601L168 757.623L66 757.623L66 755.601L168 755.601ZM168 729.301L168 731.323L66 731.323L66 729.301L168 729.301ZM168 703L168 705.023L66 705.023L66 703L168 703Z" fill="#FF383C"/>
 <text id="t:bear_conviction" fill="white" style="white-space: pre" xml:space="preserve" font-family="Inter Tight" font-size="24" font-weight="600" letter-spacing="0em"><tspan x="222" y="873.23">62% conviction</tspan></text>

@@ -321,12 +321,6 @@ def case_number(rows, created_utc=None):
     return len(dates) + 1
 
 
-def bucket_word(conf):
-    """Confidence bucket word (matches the orchestrator's 55-60/61-70/71-80)."""
-    p = float(conf) * 100
-    return "lean" if p <= 60 else "confident" if p <= 70 else "conviction"
-
-
 def last_daily_winner(rows):
     """Agent who won the most recently resolved daily pair, or None."""
     res = [r for r in rows if r["result"] in ("win", "loss")
@@ -1155,6 +1149,10 @@ def main():
             case_no = case_number(rows)
             sc = season_score(rows)
             dc = data_payload.get("day_change_pct")
+            # the pair resolves against the first daily close (00:00 UTC) strictly
+            # after its 24h expiry — show that exact datetime, not a stub
+            expires = now + timedelta(hours=24)
+            resolve_dt = expires.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
             path = os.path.join(tempfile.gettempdir(),
                                 f"theroom_{now:%Y-%m-%d}_case{case_no}_bet.png")
             svg_card.build_card_v2(
@@ -1163,11 +1161,9 @@ def main():
                 guardian_wins=sc["guardian"]["wins"], last_winner=last_daily_winner(rows),
                 level=level, btc_price=current_price,
                 btc_change=float(dc) if isinstance(dc, (int, float)) else 0.0,
-                resolve_label="Resolves 00:00 UTC",
-                bull_conf=float(o["confidence"]), bull_bucket=bucket_word(o["confidence"]),
-                bull_reason=str(o.get("driver", "")).strip(),
-                bear_conf=float(g["confidence"]), bear_bucket=bucket_word(g["confidence"]),
-                bear_reason=str(g.get("driver", "")).strip())
+                resolve_label=f"Resolves {resolve_dt:%b} {resolve_dt.day}, 00:00 UTC",
+                bull_conf=float(o["confidence"]), bull_reason=str(o.get("driver", "")).strip(),
+                bear_conf=float(g["confidence"]), bear_reason=str(g.get("driver", "")).strip())
             tg_send_photo(path)
             card["path"] = path
         run_step("today_card", _today_card)
