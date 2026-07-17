@@ -1098,7 +1098,7 @@ def post_resolution(resolved, rows, now):
             missed_by=abs(close_px - level), case_no=case_no,
             season_line=build_season_line(rows, now, emoji=False),
             streak=leader.replace("🔮 ", "").replace("🛡 ", "") if leader else None,
-            date_label=f"{parse_iso(resolved[0]['created_utc']):%b %d}",
+            date_label=f"{resolve_close_date(resolved[0]['created_utc'], resolved[0]['horizon_h']):%b %d}",
         )
         caption = resolution_text if len(resolution_text) <= 1024 else None
         tg_send_photo(path, caption=caption)
