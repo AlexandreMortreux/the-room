@@ -26,7 +26,8 @@ the lines cannot be swapped. Your first line opens with your stance as one claus
 ≤280 characters. FORBIDDEN deal language: long, short, buy, sell, position, size.
 Only forecast language: above/below, closes, holds, level.
 PREDICTION: strictly from the methodology, mutually exclusive with Oracle's at
-the same level. 24h horizon. Confidence is a single number 0.55-0.80 (Brier-scored),
+the same level, resolved by the next Binance daily close. Confidence is a single
+number 0.55-0.80 (Brier-scored),
 never split into components. Give a Driver (the main factor from data_payload) and
 an Invalidation (a specific level/condition from the data at which you concede) —
 both from the data, not invented.

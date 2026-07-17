@@ -18,6 +18,7 @@ import sys
 import tempfile
 import time
 import traceback
+from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 
 import anthropic
@@ -351,6 +352,16 @@ def build_tldr(predictions, rows, now):
             f"Guardian says DOWN. Score {o}:{g}. Vote below ⬇</b>")
 
 
+def build_resolve_line(predictions, now):
+    """Predictions banner — no '24h' (it's misleading: the pair settles on the
+    next day's daily close, ~39h out, not 24h). States the actual resolve date
+    and the shared watershed level instead."""
+    level = float({p["agent"]: p for p in predictions}["oracle"]["level"])
+    rd = resolve_close_date(iso(now), 24)
+    return (f"🎯 <b>Predictions</b> · resolves at {rd:%b} {rd.day} daily close "
+            f"· watershed ${level:,.0f}")
+
+
 def build_weekly_line(rows, current_price):
     """Footer line for the active weekly bet (horizon 168h), or None."""
     weekly = [r for r in rows if r.get("horizon_h") == "168" and r["result"] == "pending"]
@@ -381,45 +392,60 @@ def build_tweet_draft(rows, predictions, now):
 # Step 1: resolve expired predictions against the Binance daily close
 # ---------------------------------------------------------------------------
 
-def resolve_close_utc(expires):
-    """The daily close (00:00 UTC) a pair resolves against: the close that prints
-    at 00:00 on the *expiry date*. A pair created 07-17 00:20 (expires 07-18
-    00:20) resolves against the 07-17 daily candle, which prints at 07-18 00:00
-    UTC — one daily close, ~24h out. Both resolve_pending and the bet card derive
-    the resolution time from here, so the card can never drift from the ledger."""
-    return expires.replace(hour=0, minute=0, second=0, microsecond=0)
+def resolve_close_date(created_utc, horizon_h):
+    """Date of the Binance daily candle a pair settles against: a pair made on UTC
+    day D with a 24h horizon settles on day D+1's daily close (a 168h weekly on
+    D+7). That candle is labelled by its open date and prints at 00:00 UTC the next
+    day. Single source of truth for the resolver and the bet card."""
+    return parse_iso(created_utc).date() + timedelta(days=int(horizon_h) // 24)
 
 
 def resolve_pending(rows, klines, now):
-    """Sets win/loss and Brier from the daily close that prints at 00:00 on the
-    expiry date (see resolve_close_utc). If that close hasn't happened yet, the
-    prediction stays pending — no early resolution, no exceptions."""
+    """Resolve each pending pair against its OWN daily close — the candle whose
+    date == the pair's resolve date (D+1 daily, D+7 weekly), never merely 'the
+    first close after expiry'. Invariants:
+      * a pair resolves only against that exact-dated candle;
+      * one daily close settles exactly one pair — if two same-horizon pairs map
+        to the same close, resolve NEITHER and alert, so a single close can never
+        double-count two cases (the Case 9/10 incident)."""
     if not klines:
         log("klines unavailable, resolution skipped")
         return []
-    finished = [k for k in klines if k[6] / 1000 <= now.timestamp()]
-    resolved = []
+    # finished daily candles indexed by their UTC open-date (the candle's day label)
+    by_date = {}
+    for k in klines:
+        if k[6] / 1000 <= now.timestamp():
+            by_date[datetime.fromtimestamp(k[0] / 1000, tz=timezone.utc).date()] = k
+    # pending rows grouped into pairs by created_utc, each with its target close
+    pairs = {}
     for row in rows:
-        if row["result"] != "pending":
+        if row["result"] == "pending":
+            pairs.setdefault(row["created_utc"], []).append(row)
+    target = {cu: resolve_close_date(cu, pair[0]["horizon_h"]) for cu, pair in pairs.items()}
+    claims = Counter((target[cu], pair[0]["horizon_h"]) for cu, pair in pairs.items())
+    resolved = []
+    for cu, pair in pairs.items():
+        rd = target[cu]
+        if claims[(rd, pair[0]["horizon_h"])] > 1:
+            log(f"resolution invariant: >1 pending pair maps to the {rd} close — "
+                f"refusing to resolve {cu}")
+            alert_owner(f"⚠️ THE ROOM: two pending pairs map to the {rd} daily "
+                        f"close — resolution halted, nothing closed")
             continue
-        expires = parse_iso(row["expires_utc"])
-        # the candle printing at `target` (expiry-date 00:00) closes ~1ms before
-        # it, so select it as the first finished candle past the prior midnight
-        target = resolve_close_utc(expires)
-        threshold = (target - timedelta(days=1)).timestamp()
-        candle = next((k for k in finished if k[6] / 1000 > threshold), None)
+        candle = by_date.get(rd)
         if candle is None:
-            continue  # the expiry-date daily close isn't available yet — pending
+            continue  # that day's daily close hasn't printed yet — stays pending
         close = float(candle[4])
-        level = float(row["level"])
-        win = close > level if row["direction"] == "above" else close < level
-        confidence = float(row["confidence"])
-        outcome = 1.0 if win else 0.0
-        row["result"] = "win" if win else "loss"
-        row["price_at_expiry"] = f"{close:.2f}"
-        row["resolved_utc"] = iso(now)
-        row["brier"] = f"{(confidence - outcome) ** 2:.4f}"
-        resolved.append(row)
+        for row in pair:
+            level = float(row["level"])
+            win = close > level if row["direction"] == "above" else close < level
+            confidence = float(row["confidence"])
+            outcome = 1.0 if win else 0.0
+            row["result"] = "win" if win else "loss"
+            row["price_at_expiry"] = f"{close:.2f}"
+            row["resolved_utc"] = iso(now)
+            row["brier"] = f"{(confidence - outcome) ** 2:.4f}"
+            resolved.append(row)
     return resolved
 
 
@@ -1091,15 +1117,17 @@ def main():
 
     # 1. Resolve expired predictions
     rows = load_ledger()
-    # STAGE-only test switch: back-date the oldest pending pair so the morning
-    # resolution path (Template A card + caption) fires on demand in staging.
+    # STAGE-only test switch: back-date the oldest pending pair by 2 days so its
+    # resolve date (D+1) lands on yesterday's already-printed close, forcing the
+    # resolution path (Template A card + caption) on demand in staging.
     if STAGE and os.environ.get("STAGE_RESOLVE_TEST") == "1":
         days = sorted({r["created_utc"][:10] for r in rows if r["result"] == "pending"})
         if days:
-            backdated = iso(now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(hours=12))
+            base = now.replace(hour=3, minute=0, second=0, microsecond=0) - timedelta(days=2)
             for r in rows:
                 if r["result"] == "pending" and r["created_utc"][:10] == days[0]:
-                    r["expires_utc"] = backdated
+                    r["created_utc"] = iso(base)
+                    r["expires_utc"] = iso(base + timedelta(hours=int(r["horizon_h"])))
             log(f"STAGE_RESOLVE_TEST: back-dated {days[0]} pending pair to force a resolution")
     klines = fetch_klines()
     current_price = fetch_current_price(klines)
@@ -1182,9 +1210,9 @@ def main():
             case_no = case_number(rows)
             sc = season_score(rows)
             dc = data_payload.get("day_change_pct")
-            # exact datetime the pair will resolve at in ledger.csv (shared with
-            # resolve_pending via resolve_close_utc, so the card can't drift)
-            resolve_dt = resolve_close_utc(now + timedelta(hours=24))
+            # the daily close this pair settles against (D+1), same source of
+            # truth as resolve_pending — the card shows that candle's date
+            resolve_dt = resolve_close_date(iso(now), 24)
             path = os.path.join(tempfile.gettempdir(),
                                 f"theroom_{now:%Y-%m-%d}_case{case_no}_bet.png")
             svg_card.build_card_v2(
@@ -1193,7 +1221,7 @@ def main():
                 guardian_wins=sc["guardian"]["wins"], last_winner=last_daily_winner(rows),
                 level=level, btc_price=current_price,
                 btc_change=float(dc) if isinstance(dc, (int, float)) else 0.0,
-                resolve_label=f"Resolves {resolve_dt:%b} {resolve_dt.day}, 00:00 UTC",
+                resolve_label=f"Resolves at {resolve_dt:%b} {resolve_dt.day} close",
                 bull_conf=float(o["confidence"]), bull_reason=str(o.get("driver", "")).strip(),
                 bear_conf=float(g["confidence"]), bear_reason=str(g.get("driver", "")).strip())
             tg_send_photo(path)
@@ -1204,6 +1232,7 @@ def main():
             tg_send_message("\n\n".join([
                 build_header(signal, now),
                 build_tldr(debate["predictions"], rows, now),
+                build_resolve_line(debate["predictions"], now),
                 debate["post_html"].strip(),
                 build_footer(rows, now, current_price), CTA]) + "\n\n" + DISCLAIMER)
         signal_ok = run_step("signal_post", _signal_post)

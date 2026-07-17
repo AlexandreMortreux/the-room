@@ -38,9 +38,9 @@ Structure:
    "📡 Signal of the Day · <date>" header.
 2. Debate — EXACTLY 4 lines, alternating 🔮 Oracle / 🛡 Guardian / 🔮 Oracle /
    🛡 Guardian. Each agent's FIRST line OPENS with a stance line carrying its
-   role, direction, percent and bucket word:
-   "🔮 Oracle (contrarian) — Above $<level> · <NN>% · <bucket>"
-   "🛡 Guardian (skeptic) — Below $<level> · <NN>% · <bucket>"
+   role, direction and percent (always the word "conviction"):
+   "🔮 Oracle (contrarian) — Above $<level> · <NN>% conviction"
+   "🛡 Guardian (skeptic) — Below $<level> · <NN>% conviction"
    Here $<level> is the SAME watershed level that appears in the predictions JSON,
    the Predictions block and the card — one shared value. It is NEVER the current
    price. Copy the exact prediction level into both stance lines.
