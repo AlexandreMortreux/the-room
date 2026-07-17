@@ -51,7 +51,7 @@
 <text id="t:watershed" fill="white" style="white-space: pre" xml:space="preserve" font-family="Inter Tight" font-size="82" font-weight="600" letter-spacing="0em"><tspan x="108" y="610.329">$65,044</tspan></text>
 <text id="btc-label" fill="white" style="white-space: pre" xml:space="preserve" font-family="Inter Tight" font-size="21" font-weight="600" letter-spacing="0em"><tspan x="558" y="487.139">BTC Today</tspan></text>
 <text id="line-label" fill="white" style="white-space: pre" xml:space="preserve" font-family="Inter Tight" font-size="21" font-weight="600" letter-spacing="0em"><tspan x="108" y="487.139">The Line</tspan></text>
-<text id="t:resolve_time" opacity="0.5" fill="white" style="white-space: pre" xml:space="preserve" font-family="Inter Tight" font-size="21" font-weight="600" letter-spacing="0em"><tspan x="273.283" y="487.139">Resolves 20:00 UTC</tspan></text>
+<text id="t:resolve_time" opacity="0.5" fill="white" text-anchor="end" style="white-space: pre" xml:space="preserve" font-family="Inter Tight" font-size="21" font-weight="600" letter-spacing="0em"><tspan x="488" y="487.139">Resolves 20:00 UTC</tspan></text>
 <text id="t:btc_change" fill="#FF383C" text-anchor="end" style="white-space: pre" xml:space="preserve" font-family="Inter Tight" font-size="48" font-weight="600" letter-spacing="0em"><tspan x="972" y="609.461">-0.21%</tspan></text>
 <path id="bg-separator" d="M505 469L505 634" stroke="#848484"/>
 <text id="t:btc_price" fill="white" style="white-space: pre" xml:space="preserve" font-family="Inter Tight" font-size="48" font-weight="600" letter-spacing="0em"><tspan x="558" y="609.461">$63,245</tspan></text>

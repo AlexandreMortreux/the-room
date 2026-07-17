@@ -381,10 +381,19 @@ def build_tweet_draft(rows, predictions, now):
 # Step 1: resolve expired predictions against the Binance daily close
 # ---------------------------------------------------------------------------
 
+def resolve_close_utc(expires):
+    """The daily close (00:00 UTC) a pair resolves against: the close that prints
+    at 00:00 on the *expiry date*. A pair created 07-17 00:20 (expires 07-18
+    00:20) resolves against the 07-17 daily candle, which prints at 07-18 00:00
+    UTC — one daily close, ~24h out. Both resolve_pending and the bet card derive
+    the resolution time from here, so the card can never drift from the ledger."""
+    return expires.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
 def resolve_pending(rows, klines, now):
-    """Sets win/loss and Brier from the first daily close STRICTLY after
-    expires_utc (close_time > expires_utc). If no such closed candle exists yet,
-    the prediction stays pending — no early resolution, no exceptions."""
+    """Sets win/loss and Brier from the daily close that prints at 00:00 on the
+    expiry date (see resolve_close_utc). If that close hasn't happened yet, the
+    prediction stays pending — no early resolution, no exceptions."""
     if not klines:
         log("klines unavailable, resolution skipped")
         return []
@@ -394,11 +403,13 @@ def resolve_pending(rows, klines, now):
         if row["result"] != "pending":
             continue
         expires = parse_iso(row["expires_utc"])
-        if expires > now:
-            continue
-        candle = next((k for k in finished if k[6] / 1000 > expires.timestamp()), None)
+        # the candle printing at `target` (expiry-date 00:00) closes ~1ms before
+        # it, so select it as the first finished candle past the prior midnight
+        target = resolve_close_utc(expires)
+        threshold = (target - timedelta(days=1)).timestamp()
+        candle = next((k for k in finished if k[6] / 1000 > threshold), None)
         if candle is None:
-            continue  # no close strictly after expiry yet — stays pending
+            continue  # the expiry-date daily close isn't available yet — pending
         close = float(candle[4])
         level = float(row["level"])
         win = close > level if row["direction"] == "above" else close < level
@@ -604,6 +615,18 @@ DOLLAR_RE = re.compile(r"\$([\d,]+(?:\.\d+)?)")
 # prediction block's "closes above $X — NN%".
 STANCE_RE = re.compile(r"(?:Above|Below)\s+\$([\d,]+(?:\.\d+)?)\s*·")
 
+# Confidence wording: normalize any bucket label after a percent to one word.
+# The card always renders "{N}% conviction" from the number; this makes the text
+# post match, so "62% confident" / "58% lean" can never leak through.
+CONVICTION_RE = re.compile(r"(\d{2}%)(\s*·?\s*)(?:lean|confident|conviction)\b",
+                           re.IGNORECASE)
+
+
+def normalize_conviction(html):
+    """Force '{N}% conviction' everywhere in the post (both agents), preserving
+    the original separator (' · ' or a plain space)."""
+    return CONVICTION_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}conviction", html)
+
 
 def make_debate_validator(current_price, allowed_dollars):
     def validate(data):
@@ -721,11 +744,13 @@ def run_debate(client, signal, data_payload, track_records, current_price,
     user = instructions + "\n\nInput data:\n" + json.dumps(
         inputs, ensure_ascii=False, indent=1
     )
-    return call_claude_json(
+    data = call_claude_json(
         client, MODEL_DEBATE, system, user,
         max_tokens=2500, validate=make_debate_validator(current_price, allowed_dollars),
         max_attempts=4,
     )
+    data["post_html"] = normalize_conviction(data["post_html"])
+    return data
 
 
 # ---------------------------------------------------------------------------
@@ -951,11 +976,12 @@ def current_streak(rows, agent):
 
 
 def streak_leader(rows):
-    """Agent with the longest current win streak — for the score line."""
+    """Agent with the longest current win streak, only when it's >= 2 — a streak
+    of 1 just duplicates the card's 'Yesterday: point …', so it's suppressed."""
     best = None
     for agent in ("oracle", "guardian"):
         s = current_streak(rows, agent)
-        if s and s[0] == "win" and (best is None or s[1] > best[1]):
+        if s and s[0] == "win" and s[1] >= 2 and (best is None or s[1] > best[1]):
             best = (agent, s[1])
     if not best:
         return None
@@ -1046,7 +1072,7 @@ def post_resolution(resolved, rows, now):
             missed_by=abs(close_px - level), case_no=case_no,
             season_line=build_season_line(rows, now, emoji=False),
             streak=leader.replace("🔮 ", "").replace("🛡 ", "") if leader else None,
-            date_label=f"{now - timedelta(hours=24):%b %d}",
+            date_label=f"{parse_iso(resolved[0]['created_utc']):%b %d}",
         )
         caption = resolution_text if len(resolution_text) <= 1024 else None
         tg_send_photo(path, caption=caption)
@@ -1084,8 +1110,15 @@ def main():
         # 2. Resolution card is the daily game only (weekly bets are scored in
         #    the ledger but not given their own resolution card).
         daily_resolved = [r for r in resolved if r["horizon_h"] == "24"]
-        if daily_resolved:
-            run_step("resolution", lambda: post_resolution(daily_resolved, rows, now))
+        # group by pair (created_utc): if a backlog of >1 day resolves in one run
+        # (e.g. a skipped run, or the ~24h resolution boundary), each case gets its
+        # own clean resolution card instead of a card mixing two cases together
+        by_pair = {}
+        for r in daily_resolved:
+            by_pair.setdefault(r["created_utc"], []).append(r)
+        for created in sorted(by_pair):
+            pair = by_pair[created]
+            run_step("resolution", lambda pair=pair: post_resolution(pair, rows, now))
 
     # Idempotency: a scheduled production run does not post/write twice if a
     # prediction with today's UTC date already exists. DRY_RUN, STAGE and an
@@ -1149,10 +1182,9 @@ def main():
             case_no = case_number(rows)
             sc = season_score(rows)
             dc = data_payload.get("day_change_pct")
-            # the pair resolves against the first daily close (00:00 UTC) strictly
-            # after its 24h expiry — show that exact datetime, not a stub
-            expires = now + timedelta(hours=24)
-            resolve_dt = expires.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+            # exact datetime the pair will resolve at in ledger.csv (shared with
+            # resolve_pending via resolve_close_utc, so the card can't drift)
+            resolve_dt = resolve_close_utc(now + timedelta(hours=24))
             path = os.path.join(tempfile.gettempdir(),
                                 f"theroom_{now:%Y-%m-%d}_case{case_no}_bet.png")
             svg_card.build_card_v2(
