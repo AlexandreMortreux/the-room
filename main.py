@@ -201,18 +201,33 @@ def build_data_payload(klines, current_price):
         else:
             payload["open_interest_btc"] = "unavailable"
 
-    fng = http_get_json("https://api.alternative.me/fng/", params={"limit": 7})
+    # 30 days so the extreme-fear streak is counted correctly even past a week;
+    # the model is shown only the 7-day window but cites the streak as a number.
+    fng = http_get_json("https://api.alternative.me/fng/", params={"limit": 30})
     if fng and fng.get("data"):
+        hist = fng["data"]  # most-recent first
         payload["fear_greed_7d"] = [
             {
                 "date": datetime.fromtimestamp(int(d["timestamp"]), tz=timezone.utc).strftime("%Y-%m-%d"),
                 "value": int(d["value"]),
                 "classification": d["value_classification"],
             }
-            for d in fng["data"]
+            for d in hist[:7]
         ]
+        payload["fear_greed_now"] = {"value": int(hist[0]["value"]),
+                                     "classification": hist[0]["value_classification"]}
+        # consecutive most-recent days classified "Extreme Fear" — computed here,
+        # NOT counted by the model (which drifts, e.g. "seven" one day, "five" next)
+        streak = 0
+        for d in hist:
+            if d["value_classification"] == "Extreme Fear":
+                streak += 1
+            else:
+                break
+        payload["extreme_fear_streak_days"] = streak
     else:
         payload["fear_greed_7d"] = "unavailable"
+        payload["extreme_fear_streak_days"] = "unavailable"
 
     # Derived numbers are computed here, not by the model: 7-day low/high,
     # % changes, funding % — ready-made, so the model only cites them.
@@ -652,6 +667,55 @@ def normalize_conviction(html):
     """Force '{N}% conviction' everywhere in the post (both agents), preserving
     the original separator (' · ' or a plain space)."""
     return CONVICTION_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}conviction", html)
+
+
+_NUM_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+              "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12}
+
+
+def _claim_int(tok):
+    tok = tok.lower()
+    return int(tok) if tok.isdigit() else _NUM_WORDS.get(tok)
+
+
+def check_quant_claims(post_html, payload):
+    """Best-effort consistency guard: return warnings (never raises) where a
+    counted or rounded claim in the post diverges from the deterministic feed
+    number — the day-to-day drift like 'seven straight days' vs 'five'. Counts
+    are compared exactly; funding/weekly/OI to their payload value."""
+    text = re.sub(r"<[^>]+>", " ", post_html or "")
+    warnings = []
+
+    streak = payload.get("extreme_fear_streak_days")
+    if isinstance(streak, int):
+        pats = [r"\b(\w+)\s+(?:straight|consecutive)\s+(?:days?|sessions?)\b",
+                r"\b(\w+)\s+(?:days?|sessions?)\s+of\s+[\w\s]*?fear\b"]
+        for pat in pats:
+            for m in re.finditer(pat, text, re.I):
+                n = _claim_int(m.group(1))
+                if n is not None and n != streak:
+                    warnings.append(f"'{m.group(0).strip()}' vs extreme_fear_streak_days={streak}")
+
+    def _pct(field, keyword, tol):
+        v = payload.get(field)
+        if not isinstance(v, (int, float)):
+            return
+        near = rf"{keyword}[^.]{{0,40}}?(-?\d+\.?\d*)\s*%|(-?\d+\.?\d*)\s*%[^.]{{0,20}}?{keyword}"
+        for m in re.finditer(near, text, re.I):
+            raw = m.group(1) or m.group(2)
+            if abs(float(raw) - v) > tol:
+                warnings.append(f"{field} claim {raw}% vs {v}")
+
+    _pct("funding_rate_pct", "funding", 0.0001)
+    _pct("weekly_change_pct", "week", 0.01)
+
+    oi = payload.get("open_interest_btc")
+    if isinstance(oi, (int, float)):
+        for m in re.finditer(r"(?:open interest|\bOI\b)[^.]{0,40}?([\d,]{3,})|([\d,]{3,})\s*BTC", text, re.I):
+            raw = (m.group(1) or m.group(2)).replace(",", "")
+            if raw.isdigit() and abs(int(raw) - round(oi)) > max(1, 0.005 * oi):
+                warnings.append(f"open_interest claim {raw} vs ~{round(oi)}")
+    return warnings
 
 
 def make_debate_validator(current_price, allowed_dollars):
@@ -1183,6 +1247,16 @@ def main():
         log(f"WARNING: step 'debate' failed: {e}\n{traceback.format_exc()}")
         alert_owner(f"⚠️ THE ROOM: step debate failed — {e}")
         debate = None
+
+    # Quantitative-consistency guard: warn (never fail) when a counted/rounded
+    # claim in the post diverges from the deterministic feed number. In staging
+    # it also DMs the owner so drift is caught before it reaches the channel.
+    if debate:
+        quant_warnings = check_quant_claims(debate["post_html"], data_payload)
+        for w in quant_warnings:
+            log(f"WARNING: quant-claim mismatch — {w}")
+        if quant_warnings and STAGE:
+            alert_owner("⚠️ THE ROOM quant-claim mismatches:\n" + "\n".join(quant_warnings))
 
     # 7b. Weekly watershed — on Sundays, one weekly (168h) call per agent, added
     #     to the ledger before the post so its footer line shows it. Once/Sunday.

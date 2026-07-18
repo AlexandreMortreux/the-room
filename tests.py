@@ -84,9 +84,25 @@ def test_counters_survive_a_missing_day():
     check("Day# is calendar days from DAY0 (hole day counted)", days == [1, 2, 3, 5, 6])
 
 
+def test_quant_claims_consistency():
+    p = {"extreme_fear_streak_days": 5, "funding_rate_pct": 0.0051,
+         "weekly_change_pct": 2.26, "open_interest_btc": 30377.0}
+    # a drifted count is flagged (the 'seven' vs 'five' incident)
+    check("wrong streak claim warns",
+          main.check_quant_claims("<b>Seven straight sessions</b> of extreme fear.", p))
+    # the correct count and correctly-cited figures produce no warning
+    clean = ("Five consecutive days of fear, funding 0.0051%, up 2.26% on the "
+             "week, OI 30,377 BTC.")
+    check("consistent post -> no warning", main.check_quant_claims(clean, p) == [])
+    # rounded/reworded figures are flagged
+    check("funding drift warns", main.check_quant_claims("Funding at 0.02% now.", p))
+    check("weekly drift warns", main.check_quant_claims("Up 3.10% on the week.", p))
+
+
 if __name__ == "__main__":
     for t in (test_resolve_close_date, test_pair_resolves_against_its_own_dplus1,
-              test_one_close_one_pair_invariant, test_counters_survive_a_missing_day):
+              test_one_close_one_pair_invariant, test_counters_survive_a_missing_day,
+              test_quant_claims_consistency):
         print(t.__name__)
         t()
     print("\nAll tests passed.")

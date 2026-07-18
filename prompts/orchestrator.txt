@@ -5,7 +5,12 @@ high_7d, weekly_change_pct, day_change_pct, funding_rate_pct, open_interest_btc,
 Fear & Greed. The ONLY dollar figures anywhere in the post are the current price,
 the watershed level, and past-call levels — never invent any other $ amount (no
 macro figures, no billions). Translate metrics into WORDS, not new numbers.
-Do NOT compute, round or re-derive. Confidence is a single number
+Do NOT compute, round or re-derive. COUNTS AND STREAKS are pre-computed: the
+number of consecutive extreme-fear days is exactly `extreme_fear_streak_days` —
+state THAT number, never count the fear_greed_7d list yourself. Cite funding,
+open interest and weekly/day change from their `*_pct` / `open_interest_btc`
+fields verbatim; do not re-round them or restate them as a different figure.
+Confidence is a single number
 per agent (0.55-0.80), shown as a percent (65%) — never split into components.
 Always word it "<N>% conviction" — the word is ALWAYS "conviction" for both
 agents regardless of the number (e.g. "58% conviction", "72% conviction").
