@@ -1,0 +1,34 @@
+name: announce
+
+# One-off correction / announcement to the PRODUCTION channel. The bot token
+# never leaves GitHub secrets. Per CLAUDE.md, published posts are immutable —
+# this only ADDS a new message, it never edits an existing one.
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: "Exact text to post to the production channel (plain text)."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  announce:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post to production channel
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHANNEL_ID: ${{ secrets.TG_CHANNEL_ID }}
+          MSG: ${{ github.event.inputs.message }}
+        run: |
+          set -euo pipefail
+          code=$(curl -sS -o resp.json -w '%{http_code}' \
+            -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TG_CHANNEL_ID}" \
+            --data-urlencode "text=${MSG}" \
+            -d "disable_web_page_preview=true")
+          echo "HTTP $code"; cat resp.json; echo
+          python3 -c "import json,sys; ok=json.load(open('resp.json')).get('ok'); print('telegram ok=',ok); sys.exit(0 if ok else 1)"
