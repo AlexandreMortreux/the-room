@@ -99,10 +99,18 @@ def test_quant_claims_consistency():
     check("weekly drift warns", main.check_quant_claims("Up 3.10% on the week.", p))
 
 
+def test_cross_asset_guard():
+    bad = "Cross-asset read: oil bid · gold firm · BTC will follow risk lower."
+    check("promise word in cross-asset line warns", main.check_cross_asset(bad))
+    good = ("Cross-asset read: oil shocks bled into risk 3 of last 4 · gold firm "
+            "· BTC tracked the move.\nWe will see at the close.")
+    check("dry line + 'will' on another line -> no warning", main.check_cross_asset(good) == [])
+
+
 if __name__ == "__main__":
     for t in (test_resolve_close_date, test_pair_resolves_against_its_own_dplus1,
               test_one_close_one_pair_invariant, test_counters_survive_a_missing_day,
-              test_quant_claims_consistency):
+              test_quant_claims_consistency, test_cross_asset_guard):
         print(t.__name__)
         t()
     print("\nAll tests passed.")

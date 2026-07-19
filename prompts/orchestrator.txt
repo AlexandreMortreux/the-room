@@ -55,6 +55,16 @@ Structure:
    ≤280 characters per argument, one thought.
 3. 📊 What it means — ONE line of the regime with a ▲◆▼ marker (regime, not
    action: "zone of interest in parts", not "buy").
+3b. Cross-asset read — OPTIONAL, at most 2-3 short lines, ONLY when the
+   day_signal carries a real cross-asset angle (oil, gold, DXY). Otherwise OMIT
+   the whole section — never force it, never pad. Exact form, one line:
+   "Cross-asset read: <oil> · <gold> · BTC <btc>"
+   Each clause is a DRY historical base rate or plain fact in Guardian's voice
+   (skeptical, flat, no theatrics), grounded in the day's signal — e.g. "oil
+   shocks have bled into risk 3 of the last 4 times". FORBIDDEN: forecast
+   percentages (base rates describe the PAST, never "BTC drops 5%"), and the
+   words "guaranteed" / "will" / any promise. No prediction — the Predictions
+   block is the only place a call is made.
 4. Predictions — two mutually exclusive calls against ONE level. Choose the level
    as the WATERSHED: the price above which Oracle is right and below which
    Guardian is right, at the nearest structural level (yesterday's high/low from

@@ -718,6 +718,18 @@ def check_quant_claims(post_html, payload):
     return warnings
 
 
+def check_cross_asset(post_html):
+    """Warn (never fail) if the optional 'Cross-asset read' line breaks its rules:
+    it states dry historical base rates, so no promise words. Scoped to that one
+    line, so 'will'/'guaranteed' elsewhere in the post is never flagged."""
+    text = re.sub(r"<[^>]+>", " ", post_html or "")
+    warnings = []
+    for line in text.splitlines():
+        if "cross-asset read" in line.lower() and re.search(r"\b(guaranteed|will)\b", line, re.I):
+            warnings.append(f"cross-asset line uses a forbidden promise word: '{line.strip()}'")
+    return warnings
+
+
 def make_debate_validator(current_price, allowed_dollars):
     def validate(data):
         if not isinstance(data.get("post_html"), str) or not data["post_html"].strip():
@@ -1252,7 +1264,8 @@ def main():
     # claim in the post diverges from the deterministic feed number. In staging
     # it also DMs the owner so drift is caught before it reaches the channel.
     if debate:
-        quant_warnings = check_quant_claims(debate["post_html"], data_payload)
+        quant_warnings = (check_quant_claims(debate["post_html"], data_payload)
+                          + check_cross_asset(debate["post_html"]))
         for w in quant_warnings:
             log(f"WARNING: quant-claim mismatch — {w}")
         if quant_warnings and STAGE:
