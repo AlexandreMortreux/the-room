@@ -17,6 +17,10 @@ on:
         description: "STAGING only: force the weekly watershed bet on a non-Sunday."
         type: boolean
         default: false
+      dry:
+        description: "PREVIEW: print the generated thread to the log, post nothing (no channel, no ledger)."
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -50,6 +54,7 @@ jobs:
           FORCE: ${{ github.event.inputs.force == 'true' && '1' || '0' }}
           STAGE_RESOLVE_TEST: ${{ github.event.inputs.resolve_test == 'true' && '1' || '0' }}
           STAGE_WEEKLY_TEST: ${{ github.event.inputs.weekly_test == 'true' && '1' || '0' }}
+          DRY_RUN: ${{ github.event.inputs.dry == 'true' && '1' || '0' }}
         run: python main.py
 
       - name: Commit ledger if changed
