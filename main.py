@@ -648,13 +648,15 @@ def check_quant_claims(post_html, payload):
 
     streak = payload.get("extreme_fear_streak_days")
     if isinstance(streak, int):
-        pats = [r"\b(\w+)\s+(?:straight|consecutive)\s+(?:days?|sessions?)\b",
-                r"\b(\w+)\s+(?:days?|sessions?)\s+of\s+[\w\s]*?fear\b"]
-        for pat in pats:
-            for m in re.finditer(pat, text, re.I):
-                n = _claim_int(m.group(1))
-                if n is not None and n != streak:
-                    warnings.append(f"'{m.group(0).strip()}' vs extreme_fear_streak_days={streak}")
+        # only compare a count that is explicitly tied to EXTREME fear (the metric
+        # we track) — a claim about the plain "fear" zone is not this streak
+        for m in re.finditer(
+                r"extreme fear[^.]{0,25}?\b(\w+)\s+(?:days?|sessions?)"
+                r"|\b(\w+)\s+(?:straight |consecutive )?(?:days?|sessions?)[^.]{0,25}?extreme fear",
+                text, re.I):
+            n = _claim_int(m.group(1) or m.group(2))
+            if n is not None and n != streak:
+                warnings.append(f"'{m.group(0).strip()}' vs extreme_fear_streak_days={streak}")
 
     def _pct(field, keyword, tol):
         v = payload.get(field)
