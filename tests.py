@@ -99,18 +99,39 @@ def test_quant_claims_consistency():
     check("weekly drift warns", main.check_quant_claims("Up 3.10% on the week.", p))
 
 
-def test_cross_asset_guard():
-    bad = "Cross-asset read: oil bid · gold firm · BTC will follow risk lower."
-    check("promise word in cross-asset line warns", main.check_cross_asset(bad))
-    good = ("Cross-asset read: oil shocks bled into risk 3 of last 4 · gold firm "
-            "· BTC tracked the move.\nWe will see at the close.")
-    check("dry line + 'will' on another line -> no warning", main.check_cross_asset(good) == [])
+def test_debate_validator_limits():
+    from datetime import date as _date
+    v = main.make_debate_validator(64000.0, [64000.0], 11, _date(2026, 7, 20))
+    good = {
+        "setup": "Oil spikes on the strike; BTC hovers just under the line.",
+        "oracle_open": "Called it wrong yesterday, but the fear index has been pinned at extreme for five days and the flush never came. Sellers are exhausted; this floor holds.",
+        "guardian_attack": "Exhausted sellers? Five days of extreme fear and no bounce is the tell — that is distribution, not a floor. Every failed rally adds supply overhead. It cracks.",
+        "oracle_jab": "Overhead supply is just fear with a fancy name. Buyers step in where others flinch.",
+        "card_caption": "Fear says floor, price says otherwise.",
+        "predictions": [
+            {"agent": "oracle", "asset": "BTC", "direction": "above", "level": 65044, "horizon_h": 24, "confidence": 0.62, "driver": "Fear at an extreme"},
+            {"agent": "guardian", "asset": "BTC", "direction": "below", "level": 65044, "horizon_h": 24, "confidence": 0.7, "driver": "Rallies keep failing"},
+        ],
+    }
+    v(good)  # must not raise
+    check("valid debate passes", True)
+
+    def raises(mut):
+        d = {**good, **mut}
+        try:
+            v(d); return False
+        except ValueError:
+            return True
+    check("$ in a reply message fails", raises({"oracle_jab": "Buyers defend $65,044 every time."}))
+    check("% in a reply message fails", raises({"oracle_jab": "Buyers win 60% of these."}))
+    check("promise word 'will' in a reply fails", raises({"oracle_jab": "This floor will hold, guaranteed."}))
+    check("over-long oracle_jab fails", raises({"oracle_jab": "x" * 200}))
 
 
 if __name__ == "__main__":
     for t in (test_resolve_close_date, test_pair_resolves_against_its_own_dplus1,
               test_one_close_one_pair_invariant, test_counters_survive_a_missing_day,
-              test_quant_claims_consistency, test_cross_asset_guard):
+              test_quant_claims_consistency, test_debate_validator_limits):
         print(t.__name__)
         t()
     print("\nAll tests passed.")

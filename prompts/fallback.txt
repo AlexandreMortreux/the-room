@@ -1,9 +1,9 @@
-No signal of the day (quiet market). Assemble the THE ROOM post in one of these
-formats (rotate): a breakdown of a popular BTC market myth; a rematch of an old
-argument between the agents from track_records; a breakdown of current
-positioning (funding, OI, F&G) as a standalone story.
-Same structure and rules as the main orchestrator, including the NUMBERS rule
-(every value only from data_payload, compute nothing), English only, confidence
-as a percent in prose, the first sentence wrapped in <b>…</b>, two mutually
-exclusive predictions, and the JSON response format. There is no signal or
-source. Do not add a scores line or a sources line — code appends them.
+No signal of the day (quiet market). Run the SAME live-debate format and JSON
+schema as the main orchestrator — setup, oracle_open, guardian_attack,
+oracle_jab, card_caption, predictions — only the setup's "event" is drawn from a
+quiet-day angle (rotate): a popular BTC market myth to bust; a rematch of an old
+argument from track_records; or today's positioning (funding, OI, Fear & Greed)
+as the scene. All the same rules apply — numbers only from data_payload, English
+only, NO $/% in the reply messages, and the clash must be a real attack on the
+other's argument, not two parallel monologues. There is no news source today; do
+not invent one.

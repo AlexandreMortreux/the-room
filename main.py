@@ -16,6 +16,7 @@ import re
 import shutil
 import sys
 import tempfile
+import random
 import time
 import traceback
 from collections import Counter
@@ -51,7 +52,6 @@ NEWS_URL = "https://t.me/s/markettwits"
 REPO_URL = os.environ.get("REPO_URL", "https://github.com/AlexandreMortreux/the-room")
 # direct link to the ledger file (overridable via LEDGER_URL)
 LEDGER_URL = os.environ.get("LEDGER_URL", f"{REPO_URL}/blob/main/ledger.csv")
-CTA = "⚔️ Pick your side — poll below ⬇"
 DAY0 = date(2026, 7, 6)  # first prediction pair; that day is Day 1
 DISCLAIMER = (
     "<i>Not financial advice. Predictions are an experiment — "
@@ -358,38 +358,15 @@ def build_season_line(rows, now, emoji=True):
                    else f"Oracle {o} : {g} Guardian")
 
 
-def build_tldr(predictions, rows, now):
-    """Bold one-liner right after the header — the whole day in 3 seconds."""
-    level = float({p["agent"]: p for p in predictions}["oracle"]["level"])
-    sc = season_score(rows)
-    o, g = sc["oracle"]["wins"], sc["guardian"]["wins"]
-    return (f"⚔️ <b>TODAY: Oracle says UP — above ${level:,.0f}. "
-            f"Guardian says DOWN. Score {o}:{g}. Vote below ⬇</b>")
+def build_case_line(case_no, level, resolve_dt):
+    """The deterministic tail of the setup message [1] — Case, watershed line and
+    the exact resolve date (D+1 daily close). One source of truth for the setup
+    and the debate validator, so the length check matches what actually posts."""
+    return f"Case {case_no} · line ${level:,.0f} · resolves {resolve_dt:%b %d} close"
 
 
-def build_resolve_line(predictions, now):
-    """Predictions banner — no '24h' (it's misleading: the pair settles on the
-    next day's daily close, ~39h out, not 24h). States the actual resolve date
-    and the shared watershed level instead."""
-    level = float({p["agent"]: p for p in predictions}["oracle"]["level"])
-    rd = resolve_close_date(iso(now), 24)
-    return (f"🎯 <b>Predictions</b> · resolves at {rd:%b} {rd.day} daily close "
-            f"· watershed ${level:,.0f}")
-
-
-def build_weekly_line(rows, current_price):
-    """Footer line for the active weekly bet (horizon 168h), or None."""
-    weekly = [r for r in rows if r.get("horizon_h") == "168" and r["result"] == "pending"]
-    if not weekly:
-        return None
-    latest = max(r["created_utc"] for r in weekly)
-    o = next((r for r in weekly if r["agent"] == "oracle" and r["created_utc"] == latest), None)
-    if not o:
-        return None
-    level = float(o["level"])
-    away = abs(level - current_price)
-    return (f"📅 Weekly bet: Oracle {o['direction']} ${level:,.0f} · price now "
-            f"${current_price:,.0f} (${away:,.0f} away) · resolves Sunday")
+def build_setup_message(setup_text, case_no, level, resolve_dt):
+    return f"{setup_text.strip()}\n{build_case_line(case_no, level, resolve_dt)}"
 
 
 def build_tweet_draft(rows, predictions, now):
@@ -651,23 +628,6 @@ def classify_news(client, news):
 
 
 DOLLAR_RE = re.compile(r"\$([\d,]+(?:\.\d+)?)")
-# Stance-line level: "… — Above $63,500 · 65% …" / "… — Below $63,500 · 62% …"
-# (capital Above/Below + a middle-dot after the amount) — distinct from the
-# prediction block's "closes above $X — NN%".
-STANCE_RE = re.compile(r"(?:Above|Below)\s+\$([\d,]+(?:\.\d+)?)\s*·")
-
-# Confidence wording: normalize any bucket label after a percent to one word.
-# The card always renders "{N}% conviction" from the number; this makes the text
-# post match, so "62% confident" / "58% lean" can never leak through.
-CONVICTION_RE = re.compile(r"(\d{2}%)(\s*·?\s*)(?:lean|confident|conviction)\b",
-                           re.IGNORECASE)
-
-
-def normalize_conviction(html):
-    """Force '{N}% conviction' everywhere in the post (both agents), preserving
-    the original separator (' · ' or a plain space)."""
-    return CONVICTION_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}conviction", html)
-
 
 _NUM_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
               "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12}
@@ -718,31 +678,27 @@ def check_quant_claims(post_html, payload):
     return warnings
 
 
-def check_cross_asset(post_html):
-    """Warn (never fail) if the optional 'Cross-asset read' line breaks its rules:
-    it states dry historical base rates, so no promise words. Scoped to that one
-    line, so 'will'/'guaranteed' elsewhere in the post is never flagged."""
-    text = re.sub(r"<[^>]+>", " ", post_html or "")
-    warnings = []
-    for line in text.splitlines():
-        if "cross-asset read" in line.lower() and re.search(r"\b(guaranteed|will)\b", line, re.I):
-            warnings.append(f"cross-asset line uses a forbidden promise word: '{line.strip()}'")
-    return warnings
+def make_debate_validator(current_price, allowed_dollars, case_no, resolve_dt):
+    """Validates the live-debate JSON: the six message fields, their hard length
+    limits (exceeding = fail, so retries enforce it), no figures/promise words in
+    the argument messages, and two predictions at one watershed level."""
+    text_fields = ("setup", "oracle_open", "guardian_attack", "oracle_jab", "card_caption")
+    reply_fields = ("oracle_open", "guardian_attack", "oracle_jab")
+    limits = {"oracle_open": 280, "guardian_attack": 280, "oracle_jab": 160, "card_caption": 120}
 
-
-def make_debate_validator(current_price, allowed_dollars):
     def validate(data):
-        if not isinstance(data.get("post_html"), str) or not data["post_html"].strip():
-            raise ValueError("'post_html' must be a non-empty string")
-        preds = data["predictions"]
+        for f in text_fields:
+            if not isinstance(data.get(f), str) or not data[f].strip():
+                raise ValueError(f"'{f}' must be a non-empty string")
+
+        preds = data.get("predictions")
         if not isinstance(preds, list) or len(preds) != 2:
             raise ValueError("'predictions' must contain exactly 2 items")
         if {p.get("agent") for p in preds} != {"oracle", "guardian"}:
             raise ValueError("agents must be exactly 'oracle' and 'guardian'")
         if {p.get("direction") for p in preds} != {"above", "below"}:
             raise ValueError("directions must be mutually exclusive: one 'above', one 'below'")
-        levels = {round(float(p["level"]), 2) for p in preds}
-        if len(levels) != 1:
+        if len({round(float(p["level"]), 2) for p in preds}) != 1:
             raise ValueError("both predictions must reference the same level")
         for p in preds:
             if p.get("asset") != "BTC":
@@ -752,43 +708,45 @@ def make_debate_validator(current_price, allowed_dollars):
             conf = float(p["confidence"])
             if not 0.55 <= conf <= 0.80:
                 raise ValueError(f"confidence {conf} outside [0.55, 0.80]")
-            level = float(p["level"])
-            if abs(level - current_price) > 0.15 * current_price:
+            lvl = float(p["level"])
+            if abs(lvl - current_price) > 0.15 * current_price:
+                raise ValueError(f"level {lvl} outside ±15% of current price {current_price}")
+            if abs(lvl - current_price) < 0.001 * current_price:
                 raise ValueError(
-                    f"level {level} outside ±15% of current price {current_price}"
-                )
-            if abs(level - current_price) < 0.001 * current_price:
-                raise ValueError(
-                    f"level {level} must be a structural watershed distinct from the "
-                    f"current price {current_price:.0f} (use yesterday's high/low, a "
-                    f"range boundary or a round number), not the current price"
-                )
-        # Stance lines share ONE source of truth with the card and the predictions
-        # block: they must render the prediction level, never the current price.
-        lvl = float(preds[0]["level"])
-        for raw in STANCE_RE.findall(data["post_html"]):
-            if abs(float(raw.replace(",", "")) - lvl) > 2.0:
-                raise ValueError(
-                    f"stance line shows ${float(raw.replace(',', '')):,.0f} but the "
-                    f"prediction level is ${lvl:,.0f}; the stance MUST use the exact "
-                    f"level (same as the card and Predictions), never the current price"
-                )
-        # BTC price-level integrity: any $-amount in the BTC price ballpark must
-        # be a known number (data payload, a ledger level/close, or the watershed).
-        # Figures far outside that range are not price claims — the prompt bans
-        # them, but they don't hard-fail the run.
-        allowed = set(allowed_dollars) | {float(p["level"]) for p in preds}
+                    f"level {lvl} must be a structural watershed distinct from the "
+                    f"current price {current_price:.0f}, not the current price")
+
+        level = float(preds[0]["level"])
+        # [1] length includes the code-appended Case line, so check the real message
+        setup_msg = build_setup_message(data["setup"], case_no, level, resolve_dt)
+        if len(setup_msg) >= 220:
+            raise ValueError(f"setup message is {len(setup_msg)} chars (limit 220) — shorten the setup")
+        for f, lim in limits.items():
+            n = len(data[f].strip())
+            if n >= lim:
+                raise ValueError(f"'{f}' is {n} chars (limit {lim}) — shorten it")
+
+        # the argument messages carry NO figures and NO promise words — every
+        # number lives on the card, the words do the fighting
+        for f in reply_fields:
+            t = data[f]
+            if "$" in t or re.search(r"\d\s*%", t):
+                raise ValueError(f"'{f}' must carry no $ amount or % — numbers live on the card")
+            if re.search(r"\b(guaranteed|will)\b", t, re.I):
+                raise ValueError(f"'{f}' uses a forbidden promise word (guaranteed/will)")
+        if "$" in data["card_caption"] or "%" in data["card_caption"]:
+            raise ValueError("'card_caption' must carry no numbers")
+
+        # dollar integrity: the setup is the only argument text that may name a $
+        # figure, and it must be a known number (payload, ledger level, watershed)
+        allowed = set(allowed_dollars) | {level}
         lo, hi = 0.5 * current_price, 2.0 * current_price
-        for raw in DOLLAR_RE.findall(data["post_html"]):
+        for raw in DOLLAR_RE.findall(data["setup"]):
             v = float(raw.replace(",", ""))
-            if not lo <= v <= hi:
-                continue
-            if not any(abs(v - a) <= max(2.0, 0.0005 * a) for a in allowed):
+            if lo <= v <= hi and not any(abs(v - a) <= max(2.0, 0.0005 * a) for a in allowed):
                 raise ValueError(
-                    f"dollar value ${v:,.0f} in the debate matches no ledger level/close "
-                    f"or data_payload number; quote past calls verbatim from past_calls "
-                    f"and use only numbers from the data"
-                )
+                    f"dollar value ${v:,.0f} in the setup matches no ledger level/close "
+                    f"or data_payload number")
     return validate
 
 
@@ -829,7 +787,7 @@ def generate_weekly(client, data_payload, current_price):
 
 
 def run_debate(client, signal, data_payload, track_records, current_price,
-               past_calls, allowed_dollars):
+               past_calls, allowed_dollars, case_no, resolve_dt, last_winner):
     system = read_prompt("oracle.txt") + "\n\n" + read_prompt("guardian.txt")
     # The orchestrator (full structure + JSON schema) is ALWAYS included; on a
     # quiet day the fallback guidance is appended, so fallback posts get the same
@@ -842,28 +800,34 @@ def run_debate(client, signal, data_payload, track_records, current_price,
         "data_payload": data_payload,
         "track_records": track_records,
         "past_calls": past_calls,
+        # who won the last resolved daily pair, so Oracle can open [2] with a
+        # one-phrase admission when it lost
+        "last_result": {"winner": last_winner},
     }
     user = instructions + "\n\nInput data:\n" + json.dumps(
         inputs, ensure_ascii=False, indent=1
     )
-    data = call_claude_json(
-        client, MODEL_DEBATE, system, user,
-        max_tokens=2500, validate=make_debate_validator(current_price, allowed_dollars),
+    return call_claude_json(
+        client, MODEL_DEBATE, system, user, max_tokens=2500,
+        validate=make_debate_validator(current_price, allowed_dollars, case_no, resolve_dt),
         max_attempts=4,
     )
-    data["post_html"] = normalize_conviction(data["post_html"])
-    return data
 
 
 # ---------------------------------------------------------------------------
 # Telegram
 # ---------------------------------------------------------------------------
 
+_DRY_MID = [1000]  # fake, monotonically increasing message ids for DRY_RUN
+
+
 def tg_call(method, payload):
+    """Returns the sent message's id (int), or None when Telegram omits one."""
     if DRY_RUN:
         print(f"\n[DRY_RUN] Telegram {method}:")
         print(json.dumps(payload, ensure_ascii=False, indent=2))
-        return
+        _DRY_MID[0] += 1
+        return _DRY_MID[0]
     token = os.environ["TG_BOT_TOKEN"]
     url = f"https://api.telegram.org/bot{token}/{method}"
     last_err = None
@@ -872,7 +836,7 @@ def tg_call(method, payload):
             resp = requests.post(url, json=payload, timeout=HTTP_TIMEOUT)
             body = resp.json()
             if body.get("ok"):
-                return
+                return (body.get("result") or {}).get("message_id")
             last_err = body.get("description", resp.text)
         except (requests.RequestException, ValueError) as e:
             last_err = e
@@ -881,20 +845,24 @@ def tg_call(method, payload):
     raise RuntimeError(f"Telegram {method} failed: {last_err}")
 
 
-def tg_send_photo(path, caption=None):
-    """Sends the PNG under its meaningful basename; optional HTML caption."""
+def tg_send_photo(path, caption=None, reply_to=None):
+    """Sends the PNG under its meaningful basename; optional HTML caption.
+    Returns the sent message id."""
     filename = os.path.basename(path)
     if DRY_RUN:
         print(f"\n[DRY_RUN] Telegram sendPhoto: {filename}")
         if caption:
             print(f"[DRY_RUN] caption:\n{caption}")
-        return
+        _DRY_MID[0] += 1
+        return _DRY_MID[0]
     token = os.environ["TG_BOT_TOKEN"]
     url = f"https://api.telegram.org/bot{token}/sendPhoto"
     data = {"chat_id": tg_channel()}
     if caption:
         data["caption"] = caption
         data["parse_mode"] = "HTML"
+    if reply_to is not None:
+        data["reply_to_message_id"] = reply_to
     last_err = None
     for attempt in range(2):
         try:
@@ -903,7 +871,7 @@ def tg_send_photo(path, caption=None):
                                      files={"photo": (filename, f)}, timeout=30)
             body = resp.json()
             if body.get("ok"):
-                return
+                return (body.get("result") or {}).get("message_id")
             last_err = body.get("description", resp.text)
         except (requests.RequestException, ValueError, OSError) as e:
             last_err = e
@@ -912,13 +880,17 @@ def tg_send_photo(path, caption=None):
     raise RuntimeError(f"Telegram sendPhoto failed: {last_err}")
 
 
-def tg_send_message(html, chat_id=None):
-    tg_call("sendMessage", {
+def tg_send_message(html, chat_id=None, reply_to=None):
+    """Returns the sent message id (for building a reply chain)."""
+    payload = {
         "chat_id": chat_id or tg_channel(),
         "text": html,
         "parse_mode": "HTML",
         "disable_web_page_preview": True,
-    })
+    }
+    if reply_to is not None:
+        payload["reply_to_message_id"] = reply_to
+    return tg_call("sendMessage", payload)
 
 
 def tg_send_document(path, chat_id=None):
@@ -946,20 +918,47 @@ def tg_send_document(path, chat_id=None):
     raise RuntimeError(f"Telegram sendDocument failed: {last_err}")
 
 
-def tg_send_poll(predictions):
-    by_agent = {p["agent"]: p for p in predictions}
-    level = float(by_agent["oracle"]["level"])
-
-    def option(agent, emoji, name):
-        arrow = "above" if by_agent[agent]["direction"] == "above" else "below"
-        return f"{emoji} {name} — {arrow} ${level:,.0f}"
-
-    tg_call("sendPoll", {
+def tg_send_poll(predictions, reply_to=None):
+    payload = {
         "chat_id": tg_channel(),
-        "question": "🎯 Who's right tomorrow?",
-        "options": [option("oracle", "🔮", "Oracle"), option("guardian", "🛡", "Guardian")],
+        "question": "Who's right today?",
+        "options": ["🔮 UP", "🛡 DOWN"],
         "is_anonymous": True,
-    })
+    }
+    if reply_to is not None:
+        payload["reply_to_message_id"] = reply_to
+    return tg_call("sendPoll", payload)
+
+
+def _thread_delay():
+    """Human-like pause between chained messages — the thread should read like a
+    live argument, not a volley. Skipped only in DRY_RUN (no real posting)."""
+    if not DRY_RUN:
+        time.sleep(random.uniform(30, 90))
+
+
+def render_bet_card(rows, predictions, data_payload, current_price, now):
+    """Renders the v2 bet card PNG and returns its path."""
+    import svg_card
+    preds = {p["agent"]: p for p in predictions}
+    o, g = preds["oracle"], preds["guardian"]
+    level = float(o["level"])
+    case_no = case_number(rows)
+    sc = season_score(rows)
+    dc = data_payload.get("day_change_pct")
+    resolve_dt = resolve_close_date(iso(now), 24)  # the D+1 close it settles on
+    path = os.path.join(tempfile.gettempdir(),
+                        f"theroom_{now:%Y-%m-%d}_case{case_no}_bet.png")
+    svg_card.build_card_v2(
+        path, case_no=case_no, date_label=f"{now:%b} {now.day}",
+        day_n=day_number(now), oracle_wins=sc["oracle"]["wins"],
+        guardian_wins=sc["guardian"]["wins"], last_winner=last_daily_winner(rows),
+        level=level, btc_price=current_price,
+        btc_change=float(dc) if isinstance(dc, (int, float)) else 0.0,
+        resolve_label=f"Resolves at {resolve_dt:%b} {resolve_dt.day} close",
+        bull_conf=float(o["confidence"]), bull_reason=str(o.get("driver", "")).strip(),
+        bear_conf=float(g["confidence"]), bear_reason=str(g.get("driver", "")).strip())
+    return path
 
 
 # ---------------------------------------------------------------------------
@@ -1053,12 +1052,6 @@ def post_scorecard(client, rows, now):
 # Main run
 # ---------------------------------------------------------------------------
 
-def build_header(signal, now):
-    """Dated header — generated by code, not the model. Same title on quiet days."""
-    date_str = f"{now:%B} {now.day}"
-    return f"📡 <b>Signal of the Day · {date_str}</b>"
-
-
 def current_streak(rows, agent):
     """(result, length) of the agent's current streak by latest resolutions, or None."""
     history = sorted(
@@ -1089,22 +1082,6 @@ def streak_leader(rows):
         return None
     name = "🔮 Oracle" if best[0] == "oracle" else "🛡 Guardian"
     return f"{name} {best[1]}"
-
-
-def build_footer(rows, now, current_price):
-    """Post footer, assembled by code: score line + weekly bet + sources note."""
-    season = build_season_line(rows, now)
-    leader = streak_leader(rows)
-    if leader:
-        season += f" · Streak: {leader}"
-    data_note = ("Data: Binance funding/OI · Fear&amp;Greed · price feed · "
-                 "News: public feeds")
-    parts = [f"<i>{season}</i>"]
-    weekly = build_weekly_line(rows, current_price)
-    if weekly:
-        parts.append(f"<i>{weekly}</i>")
-    parts.append(f"<i>{data_note}</i>")
-    return "\n".join(parts)
 
 
 def append_predictions(rows, predictions, current_price, now, horizon_h=24, id_tag=""):
@@ -1250,22 +1227,26 @@ def main():
     past_calls = build_past_calls(rows, now)
     allowed_dollars = build_allowed_dollars(rows, data_payload, current_price)
 
-    # 7. Debate — prerequisite for the Today card / signal / poll / draft. On
-    #    failure, alert and skip those dependents instead of crashing the run.
+    # 7. Debate — prerequisite for the thread / card / poll / draft. On failure,
+    #    alert and skip those dependents instead of crashing the run.
+    case_no = case_number(rows)
+    resolve_dt = resolve_close_date(iso(now), 24)
     try:
         debate = run_debate(client, signal, data_payload, track_records, current_price,
-                            past_calls, allowed_dollars)
+                            past_calls, allowed_dollars, case_no, resolve_dt,
+                            last_daily_winner(rows))
     except Exception as e:
         log(f"WARNING: step 'debate' failed: {e}\n{traceback.format_exc()}")
         alert_owner(f"⚠️ THE ROOM: step debate failed — {e}")
         debate = None
 
     # Quantitative-consistency guard: warn (never fail) when a counted/rounded
-    # claim in the post diverges from the deterministic feed number. In staging
+    # claim in the debate diverges from the deterministic feed number. In staging
     # it also DMs the owner so drift is caught before it reaches the channel.
     if debate:
-        quant_warnings = (check_quant_claims(debate["post_html"], data_payload)
-                          + check_cross_asset(debate["post_html"]))
+        debate_text = " ".join(debate[f] for f in
+                               ("setup", "oracle_open", "guardian_attack", "oracle_jab", "card_caption"))
+        quant_warnings = check_quant_claims(debate_text, data_payload)
         for w in quant_warnings:
             log(f"WARNING: quant-claim mismatch — {w}")
         if quant_warnings and STAGE:
@@ -1284,51 +1265,50 @@ def main():
             log("weekly bet appended to ledger")
         run_step("weekly_bet", _weekly)
 
-    # 8. Publish — each step isolated (traceback + owner alert on failure, then
-    #    continue). Order: Today card -> Signal post -> Poll -> draft tweet.
+    # 8. Publish — the day as a live reply-thread: [1] setup -> [2] Oracle ->
+    #    [3] Guardian attack -> [4] Oracle jab, each a reply to the last with a
+    #    30-90s human pause, then [5] the bet card and [6] the poll (standalone,
+    #    not part of the reply chain). Sends are individually guarded so one
+    #    failure doesn't drop the rest of the thread.
     if debate:
         card = {"path": None}
 
-        def _today_card():
-            import svg_card
-            preds = {p["agent"]: p for p in debate["predictions"]}
-            o, g = preds["oracle"], preds["guardian"]
-            level = float(o["level"])
-            case_no = case_number(rows)
-            sc = season_score(rows)
-            dc = data_payload.get("day_change_pct")
-            # the daily close this pair settles against (D+1), same source of
-            # truth as resolve_pending — the card shows that candle's date
-            resolve_dt = resolve_close_date(iso(now), 24)
-            path = os.path.join(tempfile.gettempdir(),
-                                f"theroom_{now:%Y-%m-%d}_case{case_no}_bet.png")
-            svg_card.build_card_v2(
-                path, case_no=case_no, date_label=f"{now:%b} {now.day}",
-                day_n=day_number(now), oracle_wins=sc["oracle"]["wins"],
-                guardian_wins=sc["guardian"]["wins"], last_winner=last_daily_winner(rows),
-                level=level, btc_price=current_price,
-                btc_change=float(dc) if isinstance(dc, (int, float)) else 0.0,
-                resolve_label=f"Resolves at {resolve_dt:%b} {resolve_dt.day} close",
-                bull_conf=float(o["confidence"]), bull_reason=str(o.get("driver", "")).strip(),
-                bear_conf=float(g["confidence"]), bear_reason=str(g.get("driver", "")).strip())
-            tg_send_photo(path)
-            card["path"] = path
-        run_step("today_card", _today_card)
+        def _daily_thread():
+            level = float({p["agent"]: p for p in debate["predictions"]}["oracle"]["level"])
+            chain = {"reply_to": None}
 
-        def _signal_post():
-            tg_send_message("\n\n".join([
-                build_header(signal, now),
-                build_tldr(debate["predictions"], rows, now),
-                build_resolve_line(debate["predictions"], now),
-                debate["post_html"].strip(),
-                build_footer(rows, now, current_price), CTA]) + "\n\n" + DISCLAIMER)
-        signal_ok = run_step("signal_post", _signal_post)
+            def send(text, is_reply=True):
+                try:
+                    mid = tg_send_message(text, reply_to=chain["reply_to"] if is_reply else None)
+                    if mid is not None:
+                        chain["reply_to"] = mid
+                except Exception as e:
+                    log(f"WARNING: thread message failed: {e}")
+                    alert_owner(f"⚠️ THE ROOM: a thread message failed — {e}")
 
-        # Hard dependency: no poll without the signal post.
-        if signal_ok:
-            run_step("poll", lambda: tg_send_poll(debate["predictions"]))
-        else:
-            log("skipping poll: signal post did not succeed")
+            # [1] setup — root of the chain
+            send(build_setup_message(debate["setup"], case_no, level, resolve_dt), is_reply=False)
+            # [2]-[4] the argument, each a reply to the previous, with pauses
+            for text in (debate["oracle_open"], debate["guardian_attack"], debate["oracle_jab"]):
+                _thread_delay()
+                send(text)
+            # [5] bet card — standalone (all the numbers), 1-line caption + notice
+            _thread_delay()
+            try:
+                card["path"] = render_bet_card(rows, debate["predictions"], data_payload, current_price, now)
+                tg_send_photo(card["path"],
+                              caption=f'{debate["card_caption"].strip()} · not financial advice')
+            except Exception as e:
+                log(f"WARNING: bet card failed: {e}\n{traceback.format_exc()}")
+                alert_owner(f"⚠️ THE ROOM: bet card failed — {e}")
+            # [6] poll — the finale
+            _thread_delay()
+            try:
+                tg_send_poll(debate["predictions"])
+            except Exception as e:
+                log(f"WARNING: poll failed: {e}")
+                alert_owner(f"⚠️ THE ROOM: poll failed — {e}")
+        run_step("daily_thread", _daily_thread)
 
         def _ledger_write():
             append_predictions(rows, debate["predictions"], current_price, now)
