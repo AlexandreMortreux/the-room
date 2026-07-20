@@ -58,6 +58,13 @@ DISCLAIMER = (
     f'<a href="{LEDGER_URL}">open ledger</a>.</i>'
 )
 
+# X (Twitter) broadcast — production only, and only when all 4 OAuth-1.0a keys
+# are present (a new account is pay-per-use: ~$0.015/post, $0.20 with a link).
+# In DRY_RUN/STAGE, x_post() logs the composed text instead of sending.
+X_KEYS = {k: os.environ.get(k, "") for k in
+          ("X_API_KEY", "X_API_SECRET", "X_ACCESS_TOKEN", "X_ACCESS_SECRET")}
+X_ENABLED = not DRY_RUN and not STAGE and all(X_KEYS.values())
+
 LEDGER_FIELDS = [
     "id", "created_utc", "agent", "asset", "direction", "level",
     "horizon_h", "confidence", "price_source", "price_at_call",
@@ -964,6 +971,48 @@ def render_bet_card(rows, predictions, data_payload, current_price, now):
 
 
 # ---------------------------------------------------------------------------
+# X (Twitter) broadcast — notarial channel voice, one line per post
+# ---------------------------------------------------------------------------
+
+def build_x_morning(case_no, predictions, rows, resolve_dt):
+    level = float({p["agent"]: p for p in predictions}["oracle"]["level"])
+    sc = season_score(rows)
+    return (f"Case {case_no}. Oracle says up, Guardian says down. "
+            f"Line ${level:,.0f}. Score {sc['oracle']['wins']}:{sc['guardian']['wins']}. "
+            f"Resolves {resolve_dt:%b %d} close.")
+
+
+def build_x_evening(case_no, winner, rows, ledger_url):
+    sc = season_score(rows)
+    point = {"oracle": "Point Oracle.", "guardian": "Point Guardian."}.get(winner, "No point.")
+    return (f"Case {case_no} closed. {point} "
+            f"{sc['oracle']['wins']}:{sc['guardian']['wins']}. Ledger: {ledger_url}")
+
+
+def x_post(text, image_path=None):
+    """Broadcast to X (production only). In DRY_RUN/STAGE or without keys, log the
+    composed text and return None. Raises on a real API error so the caller's
+    isolated step alerts — X never blocks the main pipeline."""
+    if not X_ENABLED:
+        log(f"[X preview]{' (+image)' if image_path else ''} {text}")
+        return None
+    import tweepy
+    api = tweepy.API(tweepy.OAuth1UserHandler(
+        X_KEYS["X_API_KEY"], X_KEYS["X_API_SECRET"],
+        X_KEYS["X_ACCESS_TOKEN"], X_KEYS["X_ACCESS_SECRET"]))
+    media_ids = None
+    if image_path and os.path.exists(image_path):
+        media_ids = [api.media_upload(image_path).media_id]
+    client = tweepy.Client(
+        consumer_key=X_KEYS["X_API_KEY"], consumer_secret=X_KEYS["X_API_SECRET"],
+        access_token=X_KEYS["X_ACCESS_TOKEN"], access_token_secret=X_KEYS["X_ACCESS_SECRET"])
+    resp = client.create_tweet(text=text, media_ids=media_ids)
+    tid = (resp.data or {}).get("id")
+    log(f"posted to X: {tid}")
+    return tid
+
+
+# ---------------------------------------------------------------------------
 # Sunday scorecard (by UTC+8)
 # ---------------------------------------------------------------------------
 
@@ -1134,15 +1183,17 @@ def run_step(name, fn):
 
 def post_resolution(resolved, rows, now):
     """Template A resolution card with the full text as caption (one message);
-    if the card fails, still post the text so the resolution is never lost."""
+    if the card fails, still post the text so the resolution is never lost. Then
+    broadcasts the close to X (isolated — X never breaks the Telegram resolution)."""
     resolution_text = build_resolution_post(resolved, rows, now)
+    wrow = next((r for r in resolved if r["result"] == "win"), None)
+    winner = wrow["agent"] if wrow else None
+    case_no = case_number(rows, resolved[0]["created_utc"])
+    card_path = None
     try:
         import card as card_mod
-        wrow = next((r for r in resolved if r["result"] == "win"), None)
-        winner = wrow["agent"] if wrow else None
         close_px = float(resolved[0]["price_at_expiry"])
         level = float(resolved[0]["level"])
-        case_no = case_number(rows, resolved[0]["created_utc"])
         fname = (f"theroom_{now:%Y-%m-%d}_case{case_no}_closed_"
                  f"{winner.upper() if winner else 'SPLIT'}.png")
         leader = streak_leader(rows)
@@ -1155,6 +1206,7 @@ def post_resolution(resolved, rows, now):
             streak=leader.replace("🔮 ", "").replace("🛡 ", "") if leader else None,
             date_label=f"{resolve_close_date(resolved[0]['created_utc'], resolved[0]['horizon_h']):%b %d}",
         )
+        card_path = path
         caption = resolution_text if len(resolution_text) <= 1024 else None
         tg_send_photo(path, caption=caption)
         if caption is None:
@@ -1162,6 +1214,13 @@ def post_resolution(resolved, rows, now):
     except Exception as e:
         log(f"WARNING: resolution card failed, posting text only: {e}")
         tg_send_message(resolution_text)
+
+    # X broadcast of the close — production only, isolated from the Telegram post
+    try:
+        x_post(build_x_evening(case_no, winner, rows, LEDGER_URL), card_path)
+    except Exception as e:
+        log(f"WARNING: X evening post failed: {e}")
+        alert_owner(f"⚠️ THE ROOM: X evening post failed — {e}")
 
 
 def main():
@@ -1311,6 +1370,12 @@ def main():
                 log(f"WARNING: poll failed: {e}")
                 alert_owner(f"⚠️ THE ROOM: poll failed — {e}")
         run_step("daily_thread", _daily_thread)
+
+        # X broadcast of the morning bet — isolated (fail alerts, never blocks);
+        # posts nothing outside production (logs a preview in staging/dry).
+        run_step("x_morning", lambda: x_post(
+            build_x_morning(case_no, debate["predictions"], rows, resolve_dt),
+            card.get("path")))
 
         def _ledger_write():
             append_predictions(rows, debate["predictions"], current_price, now)

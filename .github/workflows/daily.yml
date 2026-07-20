@@ -48,6 +48,10 @@ jobs:
           TG_CHANNEL_ID: ${{ secrets.TG_CHANNEL_ID }}
           TG_CHANNEL_ID_STAGING: ${{ secrets.TG_CHANNEL_ID_STAGING }}
           TG_OWNER_CHAT_ID: ${{ secrets.TG_OWNER_CHAT_ID }}
+          X_API_KEY: ${{ secrets.X_API_KEY }}
+          X_API_SECRET: ${{ secrets.X_API_SECRET }}
+          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
           REPO_URL: ${{ github.server_url }}/${{ github.repository }}
           # schedule -> production; manual -> staging unless force=true -> production
           STAGE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.force != 'true' && '1' || '0' }}

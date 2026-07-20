@@ -128,10 +128,27 @@ def test_debate_validator_limits():
     check("over-long oracle_jab fails", raises({"oracle_jab": "x" * 200}))
 
 
+def test_x_post_texts():
+    from datetime import date as _date
+    rows = pair("2026-07-20T04:00:00+00:00", 65044)  # one pending pair -> score 0:0
+    preds = [{"agent": "oracle", "level": "65044", "direction": "above"},
+             {"agent": "guardian", "level": "65044", "direction": "below"}]
+    morning = main.build_x_morning(9, preds, rows, _date(2026, 7, 21))
+    check("morning notarial: Case/Line/Score/Resolves present",
+          morning.startswith("Case 9. Oracle says up, Guardian says down.")
+          and "Line $65,044" in morning and "Resolves Jul 21 close." in morning)
+    check("morning is not Alexandre-lowercase", morning != morning.lower())
+    win = main.build_x_evening(9, "guardian", rows, "http://x/led.csv")
+    check("evening: point + score + ledger link",
+          "Point Guardian." in win and "Ledger: http://x/led.csv" in win)
+    check("evening: no-point when nobody wins", "No point." in main.build_x_evening(9, None, rows, "u"))
+
+
 if __name__ == "__main__":
     for t in (test_resolve_close_date, test_pair_resolves_against_its_own_dplus1,
               test_one_close_one_pair_invariant, test_counters_survive_a_missing_day,
-              test_quant_claims_consistency, test_debate_validator_limits):
+              test_quant_claims_consistency, test_debate_validator_limits,
+              test_x_post_texts):
         print(t.__name__)
         t()
     print("\nAll tests passed.")

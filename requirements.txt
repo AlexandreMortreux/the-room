@@ -4,3 +4,4 @@ beautifulsoup4>=4.12
 matplotlib>=3.8
 cairosvg>=2.7
 fonttools>=4.40
+tweepy>=4.14
