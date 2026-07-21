@@ -415,19 +415,21 @@ def resolve_pending(rows, klines, now):
     for k in klines:
         if k[6] / 1000 <= now.timestamp():
             by_date[datetime.fromtimestamp(k[0] / 1000, tz=timezone.utc).date()] = k
-    # pending rows grouped into pairs by created_utc, each with its target close
+    # pending rows grouped into pairs by (created_utc, horizon) — a daily and a
+    # weekly bet posted in the same run share created_utc, so grouping on the date
+    # alone merged them and read the wrong horizon (the Sunday daily never resolved)
     pairs = {}
     for row in rows:
         if row["result"] == "pending":
-            pairs.setdefault(row["created_utc"], []).append(row)
-    target = {cu: resolve_close_date(cu, pair[0]["horizon_h"]) for cu, pair in pairs.items()}
-    claims = Counter((target[cu], pair[0]["horizon_h"]) for cu, pair in pairs.items())
+            pairs.setdefault((row["created_utc"], row["horizon_h"]), []).append(row)
+    target = {key: resolve_close_date(key[0], key[1]) for key in pairs}
+    claims = Counter((target[key], key[1]) for key in pairs)
     resolved = []
-    for cu, pair in pairs.items():
-        rd = target[cu]
-        if claims[(rd, pair[0]["horizon_h"])] > 1:
+    for key, pair in pairs.items():
+        rd, horizon = target[key], key[1]
+        if claims[(rd, horizon)] > 1:
             log(f"resolution invariant: >1 pending pair maps to the {rd} close — "
-                f"refusing to resolve {cu}")
+                f"refusing to resolve {key[0]}")
             alert_owner(f"⚠️ THE ROOM: two pending pairs map to the {rd} daily "
                         f"close — resolution halted, nothing closed")
             continue

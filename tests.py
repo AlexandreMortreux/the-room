@@ -60,6 +60,21 @@ def test_pair_resolves_against_its_own_dplus1():
           all(r["price_at_expiry"] == "60017.00" for r in res) and len(res) == 2)
 
 
+def test_sunday_daily_resolves_despite_weekly():
+    # a Sunday run posts a weekly (168h) and a daily (24h) at the SAME created_utc;
+    # the daily must still resolve against its own D+1 close, not the weekly's D+7
+    created = "2026-07-19T03:58:00+00:00"
+    daily = pair(created, 64834)                    # D+1 = Jul 20 candle
+    weekly = pair(created, 65044, horizon="168")    # D+7 = Jul 26 candle
+    klines = [candle(2026, 7, d, 60000 + d) for d in range(15, 21)]  # ... Jul 20 closed
+    res = main.resolve_pending(daily + weekly, klines,
+                               datetime(2026, 7, 21, 4, 0, tzinfo=timezone.utc))
+    check("Sunday daily resolves (not merged with the weekly)",
+          len(res) == 2 and all(r["horizon_h"] == "24" for r in res))
+    check("weekly stays pending (its D+7 close hasn't printed)",
+          all(r["result"] == "pending" for r in weekly))
+
+
 def test_one_close_one_pair_invariant():
     _ALERTS.clear()
     klines = [candle(2026, 7, d, 60000 + d) for d in range(14, 17)]  # Jul 16 close available
@@ -146,6 +161,7 @@ def test_x_post_texts():
 
 if __name__ == "__main__":
     for t in (test_resolve_close_date, test_pair_resolves_against_its_own_dplus1,
+              test_sunday_daily_resolves_despite_weekly,
               test_one_close_one_pair_invariant, test_counters_survive_a_missing_day,
               test_quant_claims_consistency, test_debate_validator_limits,
               test_x_post_texts):
