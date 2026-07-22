@@ -734,11 +734,11 @@ def make_debate_validator(current_price, allowed_dollars, case_no, resolve_dt):
         level = float(preds[0]["level"])
         # [1] length includes the code-appended Case line, so check the real message
         setup_msg = build_setup_message(data["setup"], case_no, level, resolve_dt)
-        if len(setup_msg) >= 220:
+        if len(setup_msg) > 220:
             raise ValueError(f"setup message is {len(setup_msg)} chars (limit 220) — shorten the setup")
         for f, lim in limits.items():
             n = len(data[f].strip())
-            if n >= lim:
+            if n > lim:
                 raise ValueError(f"'{f}' is {n} chars (limit {lim}) — shorten it")
 
         # the argument messages carry NO figures and NO promise words — every

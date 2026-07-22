@@ -33,23 +33,23 @@ THE SIX MESSAGES — fill these fields:
 setup — the day's news setup in 2-3 short lines: the event of the day and where
   price sits relative to the line. NO analysis, NO call, NO conviction — only the
   scene. Code appends "Case N · line $X · resolves <date> close", so do NOT write
-  a Case/line/resolves line yourself. HARD LIMIT: setup < 175 characters.
+  a Case/line/resolves line yourself. HARD LIMIT: setup <= 175 characters.
 
 oracle_open — Oracle's opening, replying to the setup: its stance in words plus
   ONE main argument (its single strongest factor), 30-40 words. If Oracle LOST
   the last resolved day (see track_records / last_result), OPEN with a one-phrase
-  admission, e.g. "Called it wrong yesterday, but —". HARD LIMIT < 280 characters.
+  admission, e.g. "Called it wrong yesterday, but —". HARD LIMIT <= 280 characters.
 
 guardian_attack — Guardian's reply, which MUST ATTACK ORACLE'S SPECIFIC ARGUMENT
   from oracle_open — attack the argument, not the topic. Find its weak point (thin
   data, how long the signal has ALREADY run without paying off, a base rate that
   cuts the other way, a cross-asset read) and hit THAT, then land your own
-  counter-thesis. Not a parallel method dump. 30-40 words. HARD LIMIT < 280 chars.
+  counter-thesis. Not a parallel method dump. 30-40 words. HARD LIMIT <= 280 chars.
 
 oracle_jab — Oracle's last word: a short counter-jab, 15-20 words. Ends on its
-  own terms — NO reconciliation, no "we'll see". HARD LIMIT < 160 characters.
+  own terms — NO reconciliation, no "we'll see". HARD LIMIT <= 160 characters.
 
-card_caption — ONE line for the bet card: a punchy hook, no numbers. < 120 chars.
+card_caption — ONE line for the bet card: a punchy hook, no numbers. <= 120 chars.
 
 predictions — two mutually exclusive calls at ONE watershed level: the price
   above which Oracle is right and below which Guardian is right, at the nearest
