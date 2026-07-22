@@ -345,13 +345,17 @@ def case_number(rows, created_utc=None):
 
 
 def last_daily_winner(rows):
-    """Agent who won the most recently resolved daily pair, or None."""
+    """Agent who won the most recently resolved daily pair, or None. Ranked by
+    resolve timestamp; a same-run batch (equal resolved_utc, e.g. a catch-up that
+    closes two cases at once) is broken by the LATER-created pair — the higher
+    case number — never by ledger order or case-number-as-string."""
     res = [r for r in rows if r["result"] in ("win", "loss")
            and r.get("horizon_h") == "24" and r["resolved_utc"]]
     if not res:
         return None
-    latest = max(r["resolved_utc"] for r in res)
-    return next((r["agent"] for r in res if r["resolved_utc"] == latest and r["result"] == "win"), None)
+    last = max(res, key=lambda r: (r["resolved_utc"], r["created_utc"]))
+    return next((r["agent"] for r in res
+                 if r["created_utc"] == last["created_utc"] and r["result"] == "win"), None)
 
 
 def build_season_line(rows, now, emoji=True):

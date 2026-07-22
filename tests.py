@@ -60,6 +60,21 @@ def test_pair_resolves_against_its_own_dplus1():
           all(r["price_at_expiry"] == "60017.00" for r in res) and len(res) == 2)
 
 
+def test_last_winner_batch_tiebreak():
+    # two daily pairs closed in ONE catch-up batch (equal resolved_utc), different
+    # winners — the later-created pair (higher case) is the "last" winner
+    def resolved(created, winner, when):
+        rows = pair(created, 65000)
+        for r in rows:
+            r["resolved_utc"] = when
+            r["result"] = "win" if r["agent"] == winner else "loss"
+        return rows
+    batch = (resolved("2026-07-19T03:58:00+00:00", "guardian", "2026-07-22T03:50:00+00:00")
+             + resolved("2026-07-20T04:00:00+00:00", "oracle", "2026-07-22T03:50:00+00:00"))
+    check("same-batch tie -> later case's winner (oracle), not ledger order",
+          main.last_daily_winner(batch) == "oracle")
+
+
 def test_sunday_daily_resolves_despite_weekly():
     # a Sunday run posts a weekly (168h) and a daily (24h) at the SAME created_utc;
     # the daily must still resolve against its own D+1 close, not the weekly's D+7
@@ -161,6 +176,7 @@ def test_x_post_texts():
 
 if __name__ == "__main__":
     for t in (test_resolve_close_date, test_pair_resolves_against_its_own_dplus1,
+              test_last_winner_batch_tiebreak,
               test_sunday_daily_resolves_despite_weekly,
               test_one_close_one_pair_invariant, test_counters_survive_a_missing_day,
               test_quant_claims_consistency, test_debate_validator_limits,
