@@ -602,7 +602,9 @@ def call_claude_json(client, model, system, user, max_tokens, validate, max_atte
                     "role": "user",
                     "content": (
                         f"Your response is invalid: {e}. "
-                        "Return corrected strict JSON, no preamble or markdown."
+                        "Fix that violation, then re-check every schema, length, "
+                        "number, and wording constraint before returning corrected "
+                        "strict JSON. No preamble or markdown."
                     ),
                 },
             ]
@@ -825,7 +827,7 @@ def run_debate(client, signal, data_payload, track_records, current_price,
     return call_claude_json(
         client, MODEL_DEBATE, system, user, max_tokens=2500,
         validate=make_debate_validator(current_price, allowed_dollars, case_no, resolve_dt),
-        max_attempts=4,
+        max_attempts=8,
     )
 
 
