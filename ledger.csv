@@ -57,7 +57,9 @@ id,created_utc,agent,asset,direction,level,horizon_h,confidence,price_source,pri
 20260801-0353-guardian,2026-08-01T03:53:17+00:00,guardian,BTC,below,63500.00,24,0.63,binance_btcusdt_1d_close,63008.62,2026-08-02T03:53:17+00:00,2026-08-03T03:57:12+00:00,63570.00,loss,0.3969
 20260802-0355-weekly-oracle,2026-08-02T03:55:49+00:00,oracle,BTC,above,65400.00,168,0.62,binance_btcusdt_1d_close,63445.99,2026-08-09T03:55:49+00:00,,,pending,
 20260802-0355-weekly-guardian,2026-08-02T03:55:49+00:00,guardian,BTC,below,65400.00,168,0.64,binance_btcusdt_1d_close,63445.99,2026-08-09T03:55:49+00:00,,,pending,
-20260802-0355-oracle,2026-08-02T03:55:49+00:00,oracle,BTC,above,63916.00,24,0.58,binance_btcusdt_1d_close,63445.99,2026-08-03T03:55:49+00:00,,,pending,
-20260802-0355-guardian,2026-08-02T03:55:49+00:00,guardian,BTC,below,63916.00,24,0.63,binance_btcusdt_1d_close,63445.99,2026-08-03T03:55:49+00:00,,,pending,
+20260802-0355-oracle,2026-08-02T03:55:49+00:00,oracle,BTC,above,63916.00,24,0.58,binance_btcusdt_1d_close,63445.99,2026-08-03T03:55:49+00:00,2026-08-04T03:41:14+00:00,63520.00,loss,0.3364
+20260802-0355-guardian,2026-08-02T03:55:49+00:00,guardian,BTC,below,63916.00,24,0.63,binance_btcusdt_1d_close,63445.99,2026-08-03T03:55:49+00:00,2026-08-04T03:41:14+00:00,63520.00,win,0.1369
 20260803-0357-oracle,2026-08-03T03:57:12+00:00,oracle,BTC,above,63500.00,24,0.72,binance_btcusdt_1d_close,62932.00,2026-08-04T03:57:12+00:00,,,pending,
 20260803-0357-guardian,2026-08-03T03:57:12+00:00,guardian,BTC,below,63500.00,24,0.63,binance_btcusdt_1d_close,62932.00,2026-08-04T03:57:12+00:00,,,pending,
+20260804-0341-oracle,2026-08-04T03:41:14+00:00,oracle,BTC,above,63916.00,24,0.57,binance_btcusdt_1d_close,63829.14,2026-08-05T03:41:14+00:00,,,pending,
+20260804-0341-guardian,2026-08-04T03:41:14+00:00,guardian,BTC,below,63916.00,24,0.68,binance_btcusdt_1d_close,63829.14,2026-08-05T03:41:14+00:00,,,pending,
